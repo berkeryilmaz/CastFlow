@@ -1,0 +1,37 @@
+{
+  "materials": [
+    {
+      "name": "Aluminum A356",
+      "density": 2680,
+      "viscosity": 0.004,
+      "liquidusTemp": 615,
+      "solidusTemp": 555,
+      "thermalConductivity": 150,
+      "specificHeat": 960,
+      "latentHeat": 390000,
+      "shrinkageFactor": 0.06
+    },
+    {
+      "name": "Cast Iron",
+      "density": 7150,
+      "viscosity": 0.005,
+      "liquidusTemp": 1200,
+      "solidusTemp": 1130,
+      "thermalConductivity": 50,
+      "specificHeat": 500,
+      "latentHeat": 220000,
+      "shrinkageFactor": 0.03
+    },
+    {
+      "name": "Bronze C90500",
+      "density": 8800,
+      "viscosity": 0.006,
+      "liquidusTemp": 1000,
+      "solidusTemp": 850,
+      "thermalConductivity": 65,
+      "specificHeat": 380,
+      "latentHeat": 200000,
+      "shrinkageFactor": 0.045
+    }
+  ]
+}

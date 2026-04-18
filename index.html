@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CastFlow | 3D Casting Simulation</title>
+    <meta name="description" content="Browser-based 3D casting, thermodynamic, and fluid dynamics simulation framework.">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+    <!-- SVG UI Icons -->
+    <script src="https://unpkg.com/feather-icons"></script>
+</head>
+<body>
+    <div id="loader-overlay">
+        <div class="spinner"></div>
+        <div id="loader-text">Loading Engineering Engine...</div>
+    </div>
+
+    <div id="app-container">
+        <!-- 3D Scene Viewport -->
+        <main id="viewport" style="position: relative;">
+            <button id="btn-recenter" class="icon-btn" title="Fit to Screen" style="position: absolute; top: 16px; right: 16px; z-index: 10; background: var(--bg-card); border: 1px solid var(--border-color); width: 36px; height: 36px;">
+                <i data-feather="maximize" style="width: 18px; height: 18px;"></i>
+            </button>
+            <div id="playback-controls" style="display: none;">
+                <button class="icon-btn" id="btn-play-pause" title="Play/Pause">
+                    <i data-feather="play"></i>
+                </button>
+                <button class="icon-btn" id="btn-step" title="Step Forward">
+                    <i data-feather="skip-forward"></i>
+                </button>
+                <input type="range" id="time-slider" min="0" max="100" value="0">
+                <span id="time-display" style="font-variant-numeric: tabular-nums; min-width: 60px;">0.0s</span>
+            </div>
+        </main>
+
+        <!-- Parameter Sidebar -->
+        <aside id="sidebar">
+            <header class="sidebar-header">
+                <h1>
+                    <!-- Icon -->
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent);"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+                    Cast<span>Flow</span>
+                </h1>
+                <button id="btn-export" class="icon-btn" title="Export Data" style="width: 32px; height: 32px; font-size: 16px;">
+                    <i data-feather="download"></i>
+                </button>
+            </header>
+
+            <div class="sidebar-content">
+                <!-- Geometry Setup -->
+                <section class="control-group">
+                    <h3>1. Geometry</h3>
+                    <div class="file-upload-wrapper">
+                        <input type="file" id="geometry-upload" accept=".stl,.obj">
+                        <div class="file-upload-display">
+                            <i data-feather="upload-cloud"></i>
+                            <span>Upload STL/OBJ Mold</span>
+                            <span class="subtext">Auto-centers natively</span>
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <label title="Mesh base measurement unit">File Units</label>
+                        <select id="geo-units" class="form-control" style="width: 100px; margin-bottom: 0;">
+                            <option value="0.001" selected>mm</option>
+                            <option value="0.01">cm</option>
+                            <option value="1.0">m</option>
+                        </select>
+                    </div>
+                    <div id="geo-bounds" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px; text-align: right;">BBox: --</div>
+                </section>
+
+                <!-- Surface Editor -->
+                <section class="control-group">
+                    <h3>2. Surface Inlets</h3>
+                    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+                        <button id="btn-surface-mode" class="btn-secondary" style="margin-top: 0; background: rgba(59, 130, 246, 0.1);">
+                            <i data-feather="edit-2" style="width: 14px; height: 14px; margin-right: 4px; vertical-align: text-bottom;"></i> Edit Surfaces
+                        </button>
+                    </div>
+                    
+                    <div id="surface-tools" style="display: none; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; margin-bottom: 10px;">
+                        <div class="input-row">
+                            <label>Tool</label>
+                            <select id="select-mode" class="form-control" style="width: 100px; margin-bottom: 0;">
+                                <option value="single">Single</option>
+                                <option value="brush">Brush</option>
+                                <option value="angle">Angle Expand</option>
+                            </select>
+                        </div>
+                        <div class="input-row" id="brush-size-row" style="display: none;">
+                            <label>Radius</label>
+                            <input type="range" id="brush-size" min="0.01" max="1.0" step="0.01" value="0.1" style="width:100px;">
+                        </div>
+                        <div class="input-row" id="angle-limit-row" style="display: none;">
+                            <label>Angle</label>
+                            <input type="range" id="angle-limit" min="1" max="90" step="1" value="30" style="width:100px;">
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-top: 10px;">
+                            <button id="btn-surface-clear" class="btn-secondary" style="margin-top:0; font-size: 0.8rem; padding: 4px 8px;">Clear</button>
+                            <button id="btn-surface-add" class="btn-primary" style="padding: 4px; font-size: 0.8rem;"><i data-feather="plus" style="width:12px; height:12px;"></i> Save Inlet</button>
+                        </div>
+                    </div>
+                    
+                    <!-- Saved Groups List -->
+                    <div id="surface-list" style="max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px;">
+                        <!-- JS injected item: { background, border, display flex, delete btn } -->
+                    </div>
+                </section>
+
+                <!-- Mesh & Domain -->
+                <section class="control-group">
+                    <h3>3. Domain Resolution</h3>
+                    <div class="input-row">
+                        <label for="voxel-size">Voxel Size</label>
+                        <div style="display:flex; gap: 4px;">
+                            <input type="number" id="voxel-size" class="form-control" value="2.0" step="0.1" min="0.1">
+                        </div>
+                    </div>
+                    
+                    <div class="input-row" style="margin-top: 10px;">
+                        <label for="domain-padding" title="Simulation bounds padding around mold">BBox Padding</label>
+                        <div style="display:flex; gap: 4px;">
+                            <input type="number" id="domain-padding" class="form-control" value="3" step="1" min="0" max="20">
+                            <span class="unit" style="line-height:24px;"> voxels</span>
+                        </div>
+                    </div>
+
+                    <div class="input-row" style="margin-top: 10px;">
+                        <label for="time-step">Time Step (dt)</label>
+                        <div>
+                            <input type="number" id="time-step" class="form-control" value="0.01" step="0.001" min="0.001">
+                            <span class="unit">s</span>
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <label for="solver-iters">Solver Iterations</label>
+                        <div>
+                            <input type="number" id="solver-iters" class="form-control" value="20" min="5" max="100">
+                            <span class="unit"></span>
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <label for="compressibility">Compressibility (k)</label>
+                        <div>
+                            <input type="number" id="compressibility" class="form-control" value="0.0001" step="0.0001">
+                            <span class="unit"></span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Materials & Physics -->
+                <section class="control-group">
+                    <h3>4. Thermodynamics</h3>
+                    <label style="font-size: 0.9rem; color: var(--text-main); margin-bottom: 6px; display: block;">Material Preset</label>
+                    <select id="material-select" class="form-control" style="width: 100%;">
+                        <option value="custom">Loading...</option>
+                    </select>
+
+                    <div style="height: 12px;"></div>
+
+                    <div class="input-row">
+                        <label for="inject-temp" title="Inlet fluid temperature">Injection Temp.</label>
+                        <div>
+                            <input type="number" id="inject-temp" class="form-control" value="700">
+                            <span class="unit">°C</span>
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <label for="mold-temp" title="Initial mold ambient temperature">Mold Temp.</label>
+                        <div>
+                            <input type="number" id="mold-temp" class="form-control" value="200">
+                            <span class="unit">°C</span>
+                        </div>
+                    </div>
+                    <div class="input-row">
+                        <label for="inject-pressure" title="Injection pressure boundary">Injection Pressure</label>
+                        <div>
+                            <input type="number" id="inject-pressure" class="form-control" value="100000" step="1000">
+                            <span class="unit">Pa</span>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Visualization -->
+                <section class="control-group">
+                    <h3>5. Visualization Mode</h3>
+                    <div class="vis-modes" id="vis-modes-container">
+                        <button class="mode-btn active" data-mode="fill">Fill Fraction</button>
+                        <button class="mode-btn" data-mode="temperature">Temperature</button>
+                        <button class="mode-btn" data-mode="velocity">Velocity</button>
+                        <button class="mode-btn" data-mode="pressure">Pressure</button>
+                        <button class="mode-btn" data-mode="solid">Solid</button>
+                    </div>
+                    <div style="display:flex; gap: 8px; margin-top: 15px;">
+                        <button id="btn-toggle-mold" class="btn-secondary" style="flex:1; margin:0; padding: 8px 4px; font-size: 0.85rem;">
+                            <i data-feather="eye-off" style="width: 14px; height: 14px; vertical-align: middle;"></i> Toggle Mold
+                        </button>
+                        <button id="btn-toggle-voxels" class="btn-secondary" style="flex:1; margin:0; padding: 8px 4px; font-size: 0.85rem;">
+                            <i data-feather="eye-off" style="width: 14px; height: 14px; vertical-align: middle;"></i> Toggle Voxels
+                        </button>
+                    </div>
+                </section>
+
+                <!-- Debug -->
+                <section class="control-group" style="padding-bottom: 20px;">
+                    <h3>6. Debug Overlays</h3>
+                    <button id="btn-wireframe" class="btn-secondary" style="margin-top:0;">Toggle Wireframe</button>
+                    <div class="input-row" style="margin-top: 10px; margin-bottom: 0;">
+                        <label title="Slices rendering via Y-Axis">Slice Y-Plane</label>
+                        <input type="range" id="slice-slider" min="0" max="100" value="100" style="width:120px;">
+                    </div>
+                </section>
+
+                <!-- Action -->
+                <section class="control-group">
+                    <button id="btn-simulate" class="btn-primary" disabled>
+                        <i data-feather="play-circle"></i> Start Simulation
+                    </button>
+                     <button id="btn-reset" class="btn-secondary" disabled>
+                        <i data-feather="rotate-ccw" style="width: 16px; height: 16px; vertical-align: text-bottom; margin-right: 4px;"></i> Reset Engine
+                    </button>
+                </section>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Import Map for Three.js -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    
+    <!-- Application Entry Point -->
+    <script type="module" src="main.js"></script>
+    <script>
+        // Init Feather icons
+        feather.replace();
+    </script>
+</body>
+</html>
