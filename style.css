@@ -537,3 +537,70 @@ select.form-control {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* Legend Overlay */
+#legend-overlay {
+  position: absolute;
+  bottom: 90px;
+  right: 20px;
+  z-index: 10;
+  background: var(--bg-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-width: 70px;
+  box-shadow: 0 4px 16px var(--shadow-panel);
+  transition: background 0.35s ease, border-color 0.35s ease;
+}
+
+#legend-title {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  text-align: center;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+#legend-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+#legend-canvas {
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+#legend-max, #legend-min {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Engine Badge */
+.engine-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+
+.engine-badge.gpu {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: white;
+}
+
+.engine-badge.cpu {
+  background: rgba(148, 163, 184, 0.3);
+  color: var(--text-muted);
+}

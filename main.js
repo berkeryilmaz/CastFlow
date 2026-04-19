@@ -11,7 +11,7 @@ class CastFlowApp {
     constructor() {
         this.initDOM();
         this.initThree();
-        this.initWorker();
+        this.initEngine(); // Async: tries GPU first, falls back to CPU Worker
         this.loadMaterials();
         
         this.simulationData = null;
@@ -22,6 +22,9 @@ class CastFlowApp {
         this.currentMatLine = null;
         this.fluidCount = 0;
         this.autoDt = true; // Auto dt mode
+        this.useGPU = false;
+        this.gpuEngine = null;
+        this.gpuRunning = false;
         
         // Surface Injection System
         this.surfaceModeActive = false;
@@ -78,6 +81,13 @@ class CastFlowApp {
         this.unitScaleSelect = document.getElementById('geo-units');
         this.geoBoundsDisplay = document.getElementById('geo-bounds');
         this.unitScale = 1.0;
+
+        // Legend
+        this.legendOverlay = document.getElementById('legend-overlay');
+        this.legendCanvas = document.getElementById('legend-canvas');
+        this.legendTitle = document.getElementById('legend-title');
+        this.legendMax = document.getElementById('legend-max');
+        this.legendMin = document.getElementById('legend-min');
 
         // Frames scrubbing
         this.frames = [];
@@ -172,6 +182,35 @@ class CastFlowApp {
         window.addEventListener('pointerup', this.onPointerUp.bind(this)); // Catch up outside canvas
     }
 
+    async initEngine() {
+        try {
+            const { GPUSimEngine } = await import('./gpuEngine.js');
+            if (await GPUSimEngine.isSupported()) {
+                this.gpuEngine = await GPUSimEngine.create();
+                this.useGPU = true;
+                console.log('CastFlow: Using WebGPU compute engine');
+                this.updateEngineBadge();
+                return;
+            }
+        } catch(e) {
+            console.warn('WebGPU not available, using CPU worker:', e);
+        }
+        this.initWorker();
+        this.updateEngineBadge();
+    }
+
+    updateEngineBadge() {
+        let badge = document.getElementById('engine-badge');
+        if (!badge) {
+            badge = document.createElement('span');
+            badge.id = 'engine-badge';
+            badge.className = 'engine-badge';
+            document.querySelector('.sidebar-header h1').appendChild(badge);
+        }
+        badge.className = `engine-badge ${this.useGPU ? 'gpu' : 'cpu'}`;
+        badge.innerText = this.useGPU ? 'GPU' : 'CPU';
+    }
+
     initWorker() {
         this.worker = new Worker('./worker.js');
         this.worker.onmessage = (e) => {
@@ -182,29 +221,15 @@ class CastFlowApp {
                 this.btnPlayPause.innerHTML = '<i data-feather="pause"></i>';
                 feather.replace();
                 this.playbackUI.style.display = 'flex';
+                this.legendOverlay.style.display = 'block';
+                this.drawLegend();
                 this.frames = [];
                 this.timeSlider.value = 0;
                 this.timeSlider.max = 0;
                 this.playing = true;
                 this.worker.postMessage({ type: 'START' });
             } else if (data.type === 'RENDER_DATA') {
-                this.frames.push(data.buffer);
-                
-                // Memory preservation - hard cap history at 3000 frames (~70MB)
-                if (this.frames.length > 3000) {
-                    this.frames.splice(0, 1000); // discard oldest memory
-                    // Fix slider desync after truncation
-                    const curVal = parseInt(this.timeSlider.value);
-                    this.timeSlider.value = Math.max(0, Math.min(curVal - 1000, this.frames.length - 1));
-                }
-                
-                this.timeSlider.max = this.frames.length - 1;
-                
-                if (this.playing) {
-                   this.timeSlider.value = this.frames.length - 1;
-                   this.updateFluidMesh(data.buffer);
-                   this.timeDisplay.innerText = data.time.toFixed(3) + 's';
-                }
+                this.onSimData(data.buffer, data.time);
             }
         };
     }
@@ -333,7 +358,11 @@ class CastFlowApp {
         });
 
         this.btnReset.addEventListener('click', () => {
-             this.worker.postMessage({ type: 'PAUSE' });
+             if (this.useGPU) {
+                 this.gpuRunning = false;
+             } else {
+                 this.worker.postMessage({ type: 'PAUSE' });
+             }
              if (this.fluidMesh) {
                  this.scene.remove(this.fluidMesh);
                  this.fluidMesh = null;
@@ -341,6 +370,7 @@ class CastFlowApp {
              this.timeDisplay.innerText = "0.0s";
              this.btnSimulate.disabled = false;
              this.playbackUI.style.display = 'none';
+             this.legendOverlay.style.display = 'none';
              this.frames = [];
              this.playing = false;
         });
@@ -388,6 +418,7 @@ class CastFlowApp {
                 const t = e.target.closest('.mode-btn');
                 t.classList.add('active');
                 this.viewMode = t.getAttribute('data-mode');
+                this.drawLegend();
                 // Refresh visualization if frozen
                 if (!this.playing && this.frames.length > 0) {
                     this.updateFluidMesh(this.frames[parseInt(this.timeSlider.value)]);
@@ -397,13 +428,25 @@ class CastFlowApp {
         
         this.btnPlayPause.addEventListener('click', () => {
             this.playing = !this.playing;
-            this.worker.postMessage({ type: this.playing ? 'START' : 'PAUSE' });
+            if (this.useGPU) {
+                this.gpuRunning = this.playing;
+                if (this.playing) this.gpuSimLoop();
+            } else {
+                this.worker.postMessage({ type: this.playing ? 'START' : 'PAUSE' });
+            }
             this.btnPlayPause.innerHTML = this.playing ? '<i data-feather="pause"></i>' : '<i data-feather="play"></i>';
             feather.replace();
         });
 
         this.btnStep.addEventListener('click', () => {
-            if (!this.playing) this.worker.postMessage({ type: 'STEP' });
+            if (!this.playing) {
+                if (this.useGPU) {
+                    this.gpuEngine.step(1);
+                    this.gpuEngine.readVisualData().then(({ buffer, time }) => this.onSimData(buffer, time));
+                } else {
+                    this.worker.postMessage({ type: 'STEP' });
+                }
+            }
         });
         
         this.timeSlider.addEventListener('input', (e) => {
@@ -931,28 +974,76 @@ class CastFlowApp {
         }
         this.fluidMesh.instanceMatrix.needsUpdate = true;
 
-        this.worker.postMessage({
-            type: 'INIT',
-            config: {
-                nx: this.simulationData.nx,
-                ny: this.simulationData.ny,
-                nz: this.simulationData.nz,
-                voxelSize: this.simulationData.voxelSize,
-                dt: parseFloat(this.inputDt.value),
-                grid: this.simulationData.grid,
-                material: this.currentMatLine,
-                moldTemp: parseFloat(document.getElementById('mold-temp').value),
-                injectTemp: parseFloat(document.getElementById('inject-temp').value),
-                injectPressure: parseFloat(document.getElementById('inject-pressure').value),
-                solverIters: parseInt(document.getElementById('solver-iters').value),
-                compressibility: parseFloat(document.getElementById('compressibility').value)
-            }
-        });
+        const simConfig = {
+            nx: this.simulationData.nx,
+            ny: this.simulationData.ny,
+            nz: this.simulationData.nz,
+            voxelSize: this.simulationData.voxelSize,
+            dt: parseFloat(this.inputDt.value),
+            grid: this.simulationData.grid,
+            material: this.currentMatLine,
+            moldTemp: parseFloat(document.getElementById('mold-temp').value),
+            injectTemp: parseFloat(document.getElementById('inject-temp').value),
+            injectPressure: parseFloat(document.getElementById('inject-pressure').value),
+            solverIters: parseInt(document.getElementById('solver-iters').value),
+            compressibility: parseFloat(document.getElementById('compressibility').value)
+        };
 
-        this.worker.postMessage({
-            type: 'SET_INLETS_WITH_NORMALS',
-            inlets: unifiedInlets
-        });
+        if (this.useGPU && this.gpuEngine) {
+            // GPU path
+            this.gpuEngine.configure(simConfig);
+            this.gpuEngine.setInlets(unifiedInlets);
+            this.btnSimulate.disabled = false;
+            this.btnReset.disabled = false;
+            this.btnPlayPause.innerHTML = '<i data-feather="pause"></i>';
+            feather.replace();
+            this.playbackUI.style.display = 'flex';
+            this.legendOverlay.style.display = 'block';
+            this.drawLegend();
+            this.frames = [];
+            this.timeSlider.value = 0;
+            this.timeSlider.max = 0;
+            this.playing = true;
+            this.gpuRunning = true;
+            this.gpuSimLoop();
+        } else {
+            // CPU Worker path
+            this.worker.postMessage({ type: 'INIT', config: simConfig });
+            this.worker.postMessage({ type: 'SET_INLETS_WITH_NORMALS', inlets: unifiedInlets });
+        }
+    }
+
+    // ─── GPU Simulation Loop ────────────────────────────────
+    async gpuSimLoop() {
+        if (!this.gpuRunning) return;
+
+        this.gpuEngine.step(4); // 4 physics steps per render
+        const { buffer, time } = await this.gpuEngine.readVisualData();
+
+        this.onSimData(buffer, time);
+
+        if (this.gpuRunning) {
+            requestAnimationFrame(() => this.gpuSimLoop());
+        }
+    }
+
+    // ─── Unified simulation data handler ───────────────────
+    onSimData(buffer, time) {
+        this.frames.push(buffer);
+
+        if (this.frames.length > 3000) {
+            this.frames.splice(0, 1000);
+            const curVal = parseInt(this.timeSlider.value);
+            this.timeSlider.value = Math.max(0, Math.min(curVal - 1000, this.frames.length - 1));
+        }
+
+        this.timeSlider.max = this.frames.length - 1;
+
+        if (this.playing) {
+            this.timeSlider.value = this.frames.length - 1;
+            this.updateFluidMesh(buffer);
+            this.timeDisplay.innerText = time.toFixed(3) + 's';
+        }
     }
 
     // ─── CRITICAL FIX: Buffer offset correction ──────────────
@@ -1067,6 +1158,73 @@ class CastFlowApp {
 
     hideLoader() {
         this.loader.classList.add('hidden');
+    }
+
+    // ─── Legend Drawing ───────────────────────────────────────
+    drawLegend() {
+        const canvas = this.legendCanvas;
+        const ctx = canvas.getContext('2d');
+        const h = canvas.height;
+        const w = canvas.width;
+
+        ctx.clearRect(0, 0, w, h);
+
+        for (let y = 0; y < h; y++) {
+            const t = 1.0 - y / h; // top = max value, bottom = min
+            let hue, sat, light;
+
+            if (this.viewMode === 'fill') {
+                hue = (0.08 + t * 0.52) * 360;
+                sat = 95;
+                light = (0.35 + t * 0.3) * 100;
+            } else if (this.viewMode === 'temperature') {
+                hue = (1.0 - t) * 0.66 * 360;
+                sat = 100;
+                light = 50;
+            } else if (this.viewMode === 'velocity') {
+                hue = (0.3 + (1.0 - t) * 0.4) * 360;
+                sat = 80;
+                light = 50;
+            } else if (this.viewMode === 'pressure') {
+                hue = (1.0 - t) * 0.66 * 360;
+                sat = 100;
+                light = 50;
+            } else if (this.viewMode === 'solid') {
+                hue = 36;
+                sat = (1.0 - t) * 100;
+                light = 50;
+            }
+
+            ctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
+            ctx.fillRect(0, y, w, 1);
+        }
+
+        // Update labels
+        const mat = this.currentMatLine;
+        if (this.viewMode === 'fill') {
+            this.legendTitle.innerText = 'Fill Fraction';
+            this.legendMax.innerText = '1.0';
+            this.legendMin.innerText = '0.0';
+        } else if (this.viewMode === 'temperature') {
+            const Tmin = mat ? mat.solidusTemp - 100 : 0;
+            const Tmax = mat ? mat.liquidusTemp + 100 : 1000;
+            this.legendTitle.innerText = 'Temperature';
+            this.legendMax.innerText = Tmax + '°C';
+            this.legendMin.innerText = Tmin + '°C';
+        } else if (this.viewMode === 'velocity') {
+            this.legendTitle.innerText = 'Velocity';
+            this.legendMax.innerText = '3.0 m/s';
+            this.legendMin.innerText = '0.0 m/s';
+        } else if (this.viewMode === 'pressure') {
+            const maxP = parseFloat(document.getElementById('inject-pressure').value) || 100000;
+            this.legendTitle.innerText = 'Pressure';
+            this.legendMax.innerText = (maxP / 1000).toFixed(0) + ' kPa';
+            this.legendMin.innerText = '0 kPa';
+        } else if (this.viewMode === 'solid') {
+            this.legendTitle.innerText = 'Solid Fraction';
+            this.legendMax.innerText = '1.0 (Solid)';
+            this.legendMin.innerText = '0.0 (Liquid)';
+        }
     }
 
     resetCamera() {

@@ -24,6 +24,16 @@
                     <i data-feather="maximize" style="width: 18px; height: 18px;"></i>
                 </button>
             </div>
+            <!-- Color Legend Overlay -->
+            <div id="legend-overlay" style="display: none;">
+                <div id="legend-title">Fill Fraction</div>
+                <div id="legend-bar-wrap">
+                    <span id="legend-max">1.0</span>
+                    <canvas id="legend-canvas" width="22" height="160"></canvas>
+                    <span id="legend-min">0.0</span>
+                </div>
+            </div>
+
             <div id="playback-controls" style="display: none;">
                 <button class="icon-btn" id="btn-play-pause" title="Play/Pause">
                     <i data-feather="play"></i>
