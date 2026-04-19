@@ -16,6 +16,7 @@ struct SimParams {
     dt: f32, voxelSize: f32, injectTemp: f32, moldTemp: f32,
     inletSpeed: f32, inletCount: u32, gravity: f32, thermalDiffFactor: f32,
     latentHeat: f32, specificHeat: f32, solidusTemp: f32, liquidusTemp: f32,
+    thermalDiffFactorMold: f32, _pad0: u32, _pad1: u32, _pad2: u32,
 };
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(1) @binding(0) var<storage, read_write> gridFlags: array<u32>;
@@ -264,12 +265,25 @@ fn heat_transfer(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     if (idx >= params.totalCells) { return; }
     var sn = scalarsNew[idx]; let s = scalars[idx];
-    // Dirichlet BC: mold cells stay at moldTemp
-    if (isMold(idx)) {
-        sn.y = params.moldTemp; scalarsNew[idx] = sn; return;
-    }
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
-    if (x>0 && x<i32(params.nx)-1 && y>0 && y<i32(params.ny)-1 && z>0 && z<i32(params.nz)-1) {
+    let nx=i32(params.nx); let ny=i32(params.ny); let nz=i32(params.nz);
+    
+    // Mold cells: conjugate heat transfer
+    if (isMold(idx)) {
+        // Grid boundary: Dirichlet BC
+        if (x==0 || x==nx-1 || y==0 || y==ny-1 || z==0 || z==nz-1) {
+            sn.y = params.moldTemp; scalarsNew[idx] = sn; return;
+        }
+        // Interior mold: diffuse with mold properties
+        let lap = scalars[IX(x-1,y,z)].y + scalars[IX(x+1,y,z)].y
+                + scalars[IX(x,y-1,z)].y + scalars[IX(x,y+1,z)].y
+                + scalars[IX(x,y,z-1)].y + scalars[IX(x,y,z+1)].y - 6.0*s.y;
+        sn.y = s.y + params.thermalDiffFactorMold * lap;
+        scalarsNew[idx] = sn; return;
+    }
+    
+    // Casting fluid cells: diffuse with casting properties
+    if (x>0 && x<nx-1 && y>0 && y<ny-1 && z>0 && z<nz-1) {
         if (s.x > 0.01) {
             let lap = scalars[IX(x-1,y,z)].y + scalars[IX(x+1,y,z)].y
                     + scalars[IX(x,y-1,z)].y + scalars[IX(x,y+1,z)].y
@@ -319,6 +333,7 @@ struct SimParams {
     dt: f32, voxelSize: f32, injectTemp: f32, moldTemp: f32,
     inletSpeed: f32, inletCount: u32, gravity: f32, thermalDiffFactor: f32,
     latentHeat: f32, specificHeat: f32, solidusTemp: f32, liquidusTemp: f32,
+    thermalDiffFactorMold: f32, _pad0: u32, _pad1: u32, _pad2: u32,
 };
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(1) @binding(0) var<storage, read> gridFlags: array<u32>;
@@ -384,9 +399,13 @@ export class GPUSimEngine {
         this.stepCount = 0;
         this.inletSpeed = Math.min(10.0, Math.sqrt(2.0 * (config.injectPressure || 100000) / this.mat.density));
 
-        // Thermal diffusion factor
+        // Thermal diffusion factors
         const alpha = this.mat.thermalConductivity / (this.mat.density * this.mat.specificHeat);
         this.thermalDiffFactor = Math.min(alpha * this.dt / (this.voxelSize * this.voxelSize), 0.15);
+        
+        const moldMat = config.moldMaterial || { thermalConductivity: 24.6, density: 7800, specificHeat: 460 };
+        const alphaMold = moldMat.thermalConductivity / (moldMat.density * moldMat.specificHeat);
+        this.thermalDiffFactorMold = Math.min(alphaMold * this.dt / (this.voxelSize * this.voxelSize), 0.15);
 
         // Count cavity cells for output sizing
         let cavityCount = 0;
@@ -396,7 +415,7 @@ export class GPUSimEngine {
         const tc = this.totalCells;
 
         // ── Create Buffers ──
-        this.uniformsBuffer = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.uniformsBuffer = d.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         this.gridFlagsBuffer = d.createBuffer({ size: tc * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         this.velocityBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE });
         this.velocityNewBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE });
@@ -429,7 +448,7 @@ export class GPUSimEngine {
     }
 
     _writeUniforms() {
-        const buf = new ArrayBuffer(64);
+        const buf = new ArrayBuffer(80);
         const v = new DataView(buf);
         v.setUint32(0, this.nx, true);
         v.setUint32(4, this.ny, true);
@@ -447,6 +466,10 @@ export class GPUSimEngine {
         v.setFloat32(52, this.mat.specificHeat || 1, true);
         v.setFloat32(56, this.mat.solidusTemp, true);
         v.setFloat32(60, this.mat.liquidusTemp, true);
+        v.setFloat32(64, this.thermalDiffFactorMold, true);
+        v.setUint32(68, 0, true); // padding
+        v.setUint32(72, 0, true);
+        v.setUint32(76, 0, true);
         this.device.queue.writeBuffer(this.uniformsBuffer, 0, buf);
     }
 

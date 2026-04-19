@@ -42,6 +42,7 @@ let inletNormals = new Map();
 let inletSpeed = 1.0;
 let outletIndices = [];
 let isOutlet;    // Uint8Array: 1 = outlet
+let moldMat;     // Mold material thermal properties
 
 // Performance: cavity index list
 let cavityIndices = null;
@@ -100,6 +101,7 @@ function initSimulation(config) {
     configDt = config.dt;
     
     mat = config.material;
+    moldMat = config.moldMaterial || { thermalConductivity: 24.6, density: 7800, specificHeat: 460 };
     moldTemp = config.moldTemp;
     injectTemp = config.injectTemp;
     injectPressure = config.injectPressure || 100000;
@@ -625,8 +627,13 @@ function project() {
 function computeHeatTransfer() {
     if (!mat || !mat.thermalConductivity) return;
     
-    const alpha = mat.thermalConductivity / (mat.density * mat.specificHeat);
-    const dFactor = Math.min(alpha * configDt / (voxelSize * voxelSize), 0.15);
+    // Casting material thermal diffusivity
+    const alphaCast = mat.thermalConductivity / (mat.density * mat.specificHeat);
+    const dFactorCast = Math.min(alphaCast * configDt / (voxelSize * voxelSize), 0.15);
+    
+    // Mold material thermal diffusivity
+    const alphaMold = moldMat.thermalConductivity / (moldMat.density * moldMat.specificHeat);
+    const dFactorMold = Math.min(alphaMold * configDt / (voxelSize * voxelSize), 0.15);
 
     TNew.set(T);
 
@@ -634,21 +641,33 @@ function computeHeatTransfer() {
     for (let z = 0; z < nz; z++) {
         for (let y = 0; y < ny; y++) {
             for (let x = 0; x < nx; x++) {
-                // Dirichlet BC: mold boundary cells stay at moldTemp
-                // This ensures heat flows OUT of the fluid into the mold
                 if (moldGrid[idx] === 1) {
-                    TNew[idx] = moldTemp;
+                    // Grid boundary mold cells: Dirichlet BC (fixed moldTemp)
+                    // This represents the mold's outer surface at ambient
+                    if (x === 0 || x === nx-1 || y === 0 || y === ny-1 || z === 0 || z === nz-1) {
+                        TNew[idx] = moldTemp;
+                        idx++;
+                        continue;
+                    }
+                    
+                    // Interior mold cells: thermal diffusion with MOLD properties
+                    const laplacian = T[idx - 1] + T[idx + 1] +
+                                      T[idx - nx] + T[idx + nx] +
+                                      T[idx - nxny] + T[idx + nxny] -
+                                      6.0 * T[idx];
+                    TNew[idx] = T[idx] + dFactorMold * laplacian;
                     idx++;
                     continue;
                 }
                 
+                // Casting fluid cells: thermal diffusion with CASTING properties
                 if (x > 0 && x < nx-1 && y > 0 && y < ny-1 && z > 0 && z < nz-1) {
                     if (fill[idx] > 0.01) {
                         const laplacian = T[idx - 1] + T[idx + 1] +
                                           T[idx - nx] + T[idx + nx] +
                                           T[idx - nxny] + T[idx + nxny] -
                                           6.0 * T[idx];
-                        TNew[idx] = T[idx] + dFactor * laplacian;
+                        TNew[idx] = T[idx] + dFactorCast * laplacian;
                     }
                 }
                 idx++;

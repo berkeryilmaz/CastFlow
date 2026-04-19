@@ -22,6 +22,15 @@ class CastFlowApp {
         this.currentMatLine = null;
         this.fluidCount = 0;
         this.autoDt = true; // Auto dt mode
+
+        // Mold material database (real thermal properties)
+        this.moldMaterials = {
+            h13_steel:  { name: 'H13 Tool Steel', thermalConductivity: 24.6, density: 7800, specificHeat: 460 },
+            cast_iron:  { name: 'Cast Iron',      thermalConductivity: 48.0, density: 7200, specificHeat: 500 },
+            copper:     { name: 'Copper C18200',   thermalConductivity: 260,  density: 8900, specificHeat: 380 },
+            silica_sand:{ name: 'Silica Sand',     thermalConductivity: 0.6,  density: 1600, specificHeat: 1050 },
+            ceramic:    { name: 'Ceramic Alumina', thermalConductivity: 25.0, density: 3900, specificHeat: 900 },
+        };
         this.useGPU = false;
         this.gpuEngine = null;
         this.gpuRunning = false;
@@ -985,6 +994,7 @@ class CastFlowApp {
             dt: parseFloat(this.inputDt.value),
             grid: this.simulationData.grid,
             material: this.currentMatLine,
+            moldMaterial: this.moldMaterials[document.getElementById('mold-material-select').value] || this.moldMaterials.h13_steel,
             moldTemp: parseFloat(document.getElementById('mold-temp').value),
             injectTemp: parseFloat(document.getElementById('inject-temp').value),
             injectPressure: parseFloat(document.getElementById('inject-pressure').value),
