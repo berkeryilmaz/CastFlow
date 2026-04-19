@@ -17,28 +17,25 @@ class MaterialService {
   async loadMaterials() {
     let apiMaterials = [];
     try {
-      // Attempt External API fetch
-      const res = await fetch(this.externalApiUrl, { method: 'GET', mode: 'cors', signal: AbortSignal.timeout(2000) });
+      // Load from local JSON first (fast path)
+      const res = await fetch(this.localJsonPath);
       if (res.ok) {
-        const rawApiData = await res.json();
-        apiMaterials = rawApiData.materials ? rawApiData.materials.map(m => this.normalizeMaterial(m)) : [];
+        const rawLocalData = await res.json();
+        apiMaterials = rawLocalData.materials.map(m => this.normalizeMaterial(m));
       } else {
-        throw new Error("External API responded with non-ok status");
+        console.error("Local JSON fetch failed.");
       }
     } catch (e) {
-      console.error("Material API Error", e);
-      console.warn("External API fetch failed, falling back to local JSON materials:", e.message);
-      // Fallback to local JSON
+      console.error("Could not load predefined materials.", e);
+      // Attempt External API fetch as fallback
       try {
-        const res = await fetch(this.localJsonPath);
+        const res = await fetch(this.externalApiUrl, { method: 'GET', mode: 'cors', signal: AbortSignal.timeout(2000) });
         if (res.ok) {
-          const rawLocalData = await res.json();
-          apiMaterials = rawLocalData.materials.map(m => this.normalizeMaterial(m));
-        } else {
-          console.error("Local JSON fetch failed too.");
+          const rawApiData = await res.json();
+          apiMaterials = rawApiData.materials ? rawApiData.materials.map(m => this.normalizeMaterial(m)) : [];
         }
       } catch (e2) {
-        console.error("Could not load any predefined materials.", e2);
+        console.warn("External API fallback also failed:", e2.message);
       }
     }
 

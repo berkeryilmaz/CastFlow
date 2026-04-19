@@ -18,7 +18,7 @@ export class Voxelizer {
         return new Promise((resolve) => {
             // Guarantee geometry bounds
             mesh.geometry.computeBoundingBox();
-            const bbox = mesh.geometry.boundingBox;
+            const bbox = mesh.geometry.boundingBox.clone();
             
             // Apply parametric padding bounding extent
             const padding = voxelSize * paddingVoxels; 
@@ -115,6 +115,7 @@ export class Voxelizer {
                 } else {
                     resolve({
                         nx, ny, nz,
+                        totalCells: gridLength,
                         voxelSize,
                         bboxMin: { x: bbox.min.x, y: bbox.min.y, z: bbox.min.z },
                         bboxMax: { x: bbox.max.x, y: bbox.max.y, z: bbox.max.z },

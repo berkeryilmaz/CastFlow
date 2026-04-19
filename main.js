@@ -21,6 +21,7 @@ class CastFlowApp {
         this.materialsMap = {};
         this.currentMatLine = null;
         this.fluidCount = 0;
+        this.autoDt = true; // Auto dt mode
         
         // Surface Injection System
         this.surfaceModeActive = false;
@@ -37,6 +38,7 @@ class CastFlowApp {
         this.dummy = new THREE.Object3D();
         this.colorBuffer = new THREE.Color();
 
+        this.initTheme();
         this.bindEvents();
         this.animate();
         this.hideLoader();
@@ -53,12 +55,15 @@ class CastFlowApp {
         this.btnToggleMold = document.getElementById('btn-toggle-mold');
         this.btnToggleVoxels = document.getElementById('btn-toggle-voxels');
         this.btnRecenter = document.getElementById('btn-recenter');
+        this.btnToggleGrid = document.getElementById('btn-toggle-grid');
+        this.btnTheme = document.getElementById('btn-theme');
         
         this.inputGeometry = document.getElementById('geometry-upload');
         this.selectMat = document.getElementById('material-select');
         this.inputVxSize = document.getElementById('voxel-size');
         this.inputPadding = document.getElementById('domain-padding');
         this.inputDt = document.getElementById('time-step');
+        this.dtBadge = document.getElementById('dt-badge');
         
         this.visButtons = document.querySelectorAll('.mode-btn');
         this.playbackUI = document.getElementById('playback-controls');
@@ -89,21 +94,60 @@ class CastFlowApp {
         this.surfaceList = document.getElementById('surface-list');
     }
 
+    // ─── Theme System ──────────────────────────────────────────
+    initTheme() {
+        const saved = localStorage.getItem('castflow_theme');
+        if (saved === 'light') {
+            document.body.dataset.theme = 'light';
+            this.scene.background = new THREE.Color(0xe2e8f0);
+        }
+        this.updateThemeIcon();
+    }
+
+    toggleTheme() {
+        const isLight = document.body.dataset.theme === 'light';
+        if (isLight) {
+            delete document.body.dataset.theme;
+            this.scene.background = new THREE.Color(0x0f172a);
+            localStorage.setItem('castflow_theme', 'dark');
+        } else {
+            document.body.dataset.theme = 'light';
+            this.scene.background = new THREE.Color(0xe2e8f0);
+            localStorage.setItem('castflow_theme', 'light');
+        }
+        this.updateThemeIcon();
+        // Update grid colors
+        if (this.gridHelper) {
+            const isNowLight = document.body.dataset.theme === 'light';
+            this.gridHelper.material[0].color.set(isNowLight ? 0x2563eb : 0x3b82f6);
+            this.gridHelper.material[1].color.set(isNowLight ? 0x94a3b8 : 0x475569);
+        }
+    }
+
+    updateThemeIcon() {
+        const isLight = document.body.dataset.theme === 'light';
+        this.btnTheme.innerHTML = `<i data-feather="${isLight ? 'sun' : 'moon'}" style="width: 16px; height: 16px;"></i>`;
+        feather.replace();
+    }
+
+    // ─── Three.js ──────────────────────────────────────────────
     initThree() {
         this.scene = new THREE.Scene();
         this.scene.background = new THREE.Color(0x0f172a);
         
-        this.camera = new THREE.PerspectiveCamera(45, this.container.clientWidth / this.container.clientHeight, 0.0001, 1000);
+        this.camera = new THREE.PerspectiveCamera(45, this.container.clientWidth / this.container.clientHeight, 0.01, 500);
         this.camera.position.set(0, 5, 10);
         
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
-        this.renderer.setPixelRatio(window.devicePixelRatio);
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap for perf
         this.container.appendChild(this.renderer.domElement);
         
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
         this.controls.enableDamping = true;
         this.controls.dampingFactor = 0.05;
+        this.controls.minDistance = 0.001;
+        this.controls.maxDistance = 500;
         
         const ambLight = new THREE.AmbientLight(0xffffff, 0.6);
         this.scene.add(ambLight);
@@ -145,12 +189,16 @@ class CastFlowApp {
                 this.worker.postMessage({ type: 'START' });
             } else if (data.type === 'RENDER_DATA') {
                 this.frames.push(data.buffer);
-                this.timeSlider.max = this.frames.length - 1;
                 
                 // Memory preservation - hard cap history at 3000 frames (~70MB)
                 if (this.frames.length > 3000) {
                     this.frames.splice(0, 1000); // discard oldest memory
+                    // Fix slider desync after truncation
+                    const curVal = parseInt(this.timeSlider.value);
+                    this.timeSlider.value = Math.max(0, Math.min(curVal - 1000, this.frames.length - 1));
                 }
+                
+                this.timeSlider.max = this.frames.length - 1;
                 
                 if (this.playing) {
                    this.timeSlider.value = this.frames.length - 1;
@@ -182,8 +230,48 @@ class CastFlowApp {
         this.currentMatLine = m;
         document.getElementById('inject-temp').value = m.liquidusTemp + 100;
         document.getElementById('mold-temp').value = m.solidusTemp > 500 ? 250 : 100;
+        // Recalculate auto dt
+        this.computeAutoDt();
     }
 
+    // ─── Auto dt Computation ──────────────────────────────────
+    computeAutoDt() {
+        if (!this.autoDt) return;
+        if (!this.simulationData || !this.currentMatLine) return;
+
+        const mat = this.currentMatLine;
+        const dx = this.simulationData.voxelSize;
+        const P = parseFloat(document.getElementById('inject-pressure').value) || 100000;
+
+        // CFL condition: dt ≤ CFL * dx / v_char
+        // Characteristic velocity from Bernoulli: v ≈ sqrt(2P / ρ)
+        const vChar = Math.sqrt(2.0 * P / mat.density);
+        const cfl = 0.2; // Conservative CFL number for explicit schemes
+        const dt_cfl = cfl * dx / Math.max(vChar, 0.01);
+
+        // Diffusion stability: dt ≤ dx² / (6 * α)  (3D explicit)
+        const alpha = mat.thermalConductivity / (mat.density * mat.specificHeat);
+        const dt_diff = (dx * dx) / (6.0 * Math.max(alpha, 1e-10));
+
+        // Gravity stability: dt ≤ sqrt(dx / g)
+        const dt_grav = Math.sqrt(dx / 9.81);
+
+        // Take the most restrictive
+        let dt = Math.min(dt_cfl, dt_diff, dt_grav);
+
+        // Clamp to reasonable range
+        dt = Math.max(dt, 1e-6); // Minimum practical dt
+        dt = Math.min(dt, 0.1);  // Maximum practical dt
+
+        // Round to nice value
+        const magnitude = Math.pow(10, Math.floor(Math.log10(dt)));
+        dt = Math.round(dt / magnitude) * magnitude;
+        if (dt < 1e-6) dt = 1e-6;
+
+        this.inputDt.value = dt.toFixed(6).replace(/0+$/, '').replace(/\.$/, '');
+    }
+
+    // ─── Events ──────────────────────────────────────────────
     bindEvents() {
         this.selectMat.addEventListener('change', () => this.updateMaterialUI());
         
@@ -210,19 +298,12 @@ class CastFlowApp {
                 this.fluidCount = this.simulationData.totalCells;
                 if (this.fluidMesh) {
                     this.scene.remove(this.fluidMesh);
+                    this.fluidMesh = null;
                 }
-                const g = new THREE.BoxGeometry(this.simulationData.voxelSize * 0.95, this.simulationData.voxelSize * 0.95, this.simulationData.voxelSize * 0.95);
-                const m = new THREE.MeshPhongMaterial({ 
-                    color: 0xffffff,
-                    emissive: 0xff5500, // Explicit visible glow
-                    emissiveIntensity: 0.8,
-                    shininess: 100,
-                    clippingPlanes: [this.clipPlane]
-                });
-                
-                this.fluidMesh = new THREE.InstancedMesh(g, m, this.fluidCount);
-                this.fluidMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-                this.scene.add(this.fluidMesh);
+                // DO NOT create preview InstancedMesh here — it will be created
+                // properly with initialized matrices in initSimulation().
+                // Previously, creating it here with uninitialized matrices caused
+                // all instances to render at origin (0,0,0).
 
                 this.selectedFaces.clear();
                 this.injectionSurfaces = [];
@@ -233,6 +314,9 @@ class CastFlowApp {
                 
                 this.renderSurfaceList();
                 this.updateHighlightMesh();
+
+                // Recompute auto dt for new voxel size
+                this.computeAutoDt();
 
                 this.hideLoader();
             }
@@ -265,7 +349,8 @@ class CastFlowApp {
             if (this.moldMesh) {
                 // Add Gimbal/Axes to world origin mapped relative to their Bounding Box to visualize coordinates
                 if(!this.axesHelper) {
-                    this.axesHelper = new THREE.AxesHelper( this.meshBaseHeight * 1.5 );
+                    const axisSize = (this.meshBaseHeight && isFinite(this.meshBaseHeight)) ? this.meshBaseHeight * 1.5 : 1.0;
+                    this.axesHelper = new THREE.AxesHelper(axisSize);
                     this.scene.add(this.axesHelper);
                 }
                 
@@ -286,6 +371,16 @@ class CastFlowApp {
                 feather.replace();
             }
         });
+
+        // Grid Toggle
+        this.btnToggleGrid.addEventListener('click', () => {
+            if (this.gridHelper) {
+                this.gridHelper.visible = !this.gridHelper.visible;
+            }
+        });
+
+        // Theme Toggle
+        this.btnTheme.addEventListener('click', () => this.toggleTheme());
 
         this.visButtons.forEach(btn => {
             btn.addEventListener('click', (e) => {
@@ -337,6 +432,7 @@ class CastFlowApp {
 
         // Surface Editor Bindings
         this.btnSurfaceMode.addEventListener('click', () => {
+            if (!this.moldMesh) return; // Guard: no geometry loaded yet
             this.surfaceModeActive = !this.surfaceModeActive;
             if(this.surfaceModeActive) {
                 this.btnSurfaceMode.classList.remove('btn-secondary');
@@ -362,14 +458,25 @@ class CastFlowApp {
         this.btnSurfaceAdd.addEventListener('click', () => this.saveInjectionSurface());
         
         this.unitScaleSelect.addEventListener('change', (e) => {
-            const label = e.target.options[e.target.selectedIndex].text;
-            document.getElementById('voxel-unit-label').innerText = ' ' + label;
             this.unitScale = parseFloat(e.target.value);
-            // Optionally scale the input text
-            let current = parseFloat(this.inputVxSize.value);
-            if(label === 'mm') this.inputVxSize.value = (current >= 1.0 ? current : 2.0).toFixed(1);
-            if(label === 'm') this.inputVxSize.value = (current < 1.0 ? current : 0.002).toFixed(3);
         });
+
+        // dt Auto/Manual toggle
+        this.dtBadge.addEventListener('click', () => {
+            this.autoDt = !this.autoDt;
+            this.dtBadge.innerText = this.autoDt ? 'AUTO' : 'MANUAL';
+            this.dtBadge.classList.toggle('manual', !this.autoDt);
+            this.inputDt.readOnly = this.autoDt;
+            if (this.autoDt) {
+                this.computeAutoDt();
+            }
+        });
+
+        // Recompute auto dt when pressure or material properties change
+        document.getElementById('inject-pressure').addEventListener('change', () => this.computeAutoDt());
+
+        // Export button — download simulation frames as JSON
+        document.getElementById('btn-export').addEventListener('click', () => this.exportData());
     }
 
     updateSurfaceUIParams() {
@@ -442,7 +549,8 @@ class CastFlowApp {
             const gridSize = maxDim * 4.0;
             const divisions = Math.max(10, Math.floor(gridSize / (this.unitScale * 10))); // Her kare 10 (mm/cm vb)
             if (this.gridHelper) this.scene.remove(this.gridHelper);
-            this.gridHelper = new THREE.GridHelper(gridSize, divisions, 0x3b82f6, 0x475569);
+            const isLight = document.body.dataset.theme === 'light';
+            this.gridHelper = new THREE.GridHelper(gridSize, divisions, isLight ? 0x2563eb : 0x3b82f6, isLight ? 0x94a3b8 : 0x475569);
             this.gridHelper.position.y = -0.001;
             this.scene.add(this.gridHelper);
             
@@ -456,6 +564,7 @@ class CastFlowApp {
                 transparent: true, 
                 opacity: 0.3,
                 side: THREE.DoubleSide,
+                depthWrite: false,
                 clippingPlanes: [this.clipPlane]
             });
             this.moldMesh = new THREE.Mesh(geometry, mat);
@@ -493,6 +602,10 @@ class CastFlowApp {
             this.surfaceArrows.clear();
 
             this.btnSimulate.disabled = false;
+
+            // Compute auto dt now that we have geometry + voxel data
+            this.computeAutoDt();
+
         } catch (e) {
             console.error(e);
             alert("Error loading geometry.");
@@ -668,10 +781,6 @@ class CastFlowApp {
         center.divideScalar(this.selectedFaces.size);
 
         // Map to Voxels
-        // Simple approach: test bounding box of surface vs voxels, or just cast grid points onto surface
-        // Since we want standard inlet boundaries, any voxel touching a selected face is an inlet.
-        // Fast approximation: for each face center, find nearest voxel in cavity
-        
         let inletVoxels = new Set();
         const vs = this.simulationData.voxelSize;
         const { nx, ny, nz, bboxMin } = this.simulationData;
@@ -737,7 +846,7 @@ class CastFlowApp {
         this.surfaceList.innerHTML = '';
         this.injectionSurfaces.forEach((s) => {
             const el = document.createElement('div');
-            el.style.background = 'rgba(255,255,255,0.05)';
+            el.style.background = 'var(--surface-item-bg)';
             el.style.border = '1px solid var(--border-color)';
             el.style.padding = '8px';
             el.style.borderRadius = '4px';
@@ -796,9 +905,13 @@ class CastFlowApp {
             if(grid[i] === 0) this.fluidCount++;
         }
 
-        const g = new THREE.BoxGeometry(this.simulationData.voxelSize * 0.95, this.simulationData.voxelSize * 0.95, this.simulationData.voxelSize * 0.95);
-        const m = new THREE.MeshStandardMaterial({ 
-            color: 0xffffff, roughness: 0.2, metalness: 0.8,
+        const vs = this.simulationData.voxelSize;
+        const g = new THREE.BoxGeometry(vs, vs, vs);
+        const m = new THREE.MeshPhongMaterial({ 
+            color: 0xffffff, 
+            emissive: 0xff5500,
+            emissiveIntensity: 0.7,
+            shininess: 80,
             clippingPlanes: [this.clipPlane]
         });
         
@@ -806,6 +919,8 @@ class CastFlowApp {
         this.fluidMesh.instanceMatrix.setUsage( THREE.DynamicDrawUsage );
         this.fluidMesh.instanceColor = new THREE.InstancedBufferAttribute( new Float32Array( this.fluidCount * 3 ), 3 );
         this.fluidMesh.instanceColor.setUsage( THREE.DynamicDrawUsage );
+        this.fluidMesh.frustumCulled = false;
+        this.fluidMesh.renderOrder = 1;
         this.scene.add(this.fluidMesh);
         
         for(let i=0; i<this.fluidCount; i++) {
@@ -840,10 +955,12 @@ class CastFlowApp {
         });
     }
 
+    // ─── CRITICAL FIX: Buffer offset correction ──────────────
     updateFluidMesh(buffer) {
         if(!this.fluidMesh) return;
         
-        const numActive = Math.floor((buffer.length - 1) / 8);
+        // FIX: Buffer stride is exactly 8 floats per voxel, no header offset
+        const numActive = Math.floor(buffer.length / 8);
         const vs = this.simulationData.voxelSize;
         const nx = this.simulationData.nx;
         const ny = this.simulationData.ny;
@@ -852,48 +969,50 @@ class CastFlowApp {
         this.fluidMesh.count = numActive;
 
         for (let i = 0; i < numActive; i++) {
-            let offset = i * 8 + 1; // +1 mathematically offsets the step time encoded at buffer[0]
-            let index = buffer[offset];
-            let fill = buffer[offset + 1];
-            let T = buffer[offset + 2];
-            let vx = buffer[offset + 3];
-            let vy = buffer[offset + 4];
-            let vz = buffer[offset + 5];
-            let pVal = buffer[offset + 6];
-            let sFraction = buffer[offset + 7];
+            // FIX: offset = i * 8 (no +1 header — sendVisualData has no header)
+            const offset = i * 8;
+            const index = buffer[offset];
+            const fillVal = buffer[offset + 1];
+            const T = buffer[offset + 2];
+            const vxVal = buffer[offset + 3];
+            const vyVal = buffer[offset + 4];
+            const vzVal = buffer[offset + 5];
+            const pVal = buffer[offset + 6];
+            const sFraction = buffer[offset + 7];
 
-            let z = Math.floor(index / (nx * ny));
-            let r = index % (nx * ny);
-            let y = Math.floor(r / nx);
-            let x = r % nx;
+            const z = Math.floor(index / (nx * ny));
+            const r = index % (nx * ny);
+            const y = Math.floor(r / nx);
+            const x = r % nx;
 
-            let bx = bboxMin.x + x * vs + vs/2;
-            let by = bboxMin.y + y * vs + vs/2;
-            let bz = bboxMin.z + z * vs + vs/2;
+            const bx = bboxMin.x + x * vs + vs/2;
+            const by = bboxMin.y + y * vs + vs/2;
+            const bz = bboxMin.z + z * vs + vs/2;
             
             this.dummy.position.set(bx, by, bz);
-            let scaleFill = Math.pow(fill, 0.33); 
+            const scaleFill = Math.pow(fillVal, 0.33); 
             this.dummy.scale.set(scaleFill, scaleFill, scaleFill);
             this.dummy.updateMatrix();
             this.fluidMesh.setMatrixAt(i, this.dummy.matrix);
 
             if (this.viewMode === 'fill') {
-                this.colorBuffer.setHSL(0.6, 0.9, 0.2 + fill * 0.6); 
+                // Bright orange→blue colormap for fill fraction
+                this.colorBuffer.setHSL(0.08 + fillVal * 0.52, 0.95, 0.35 + fillVal * 0.3);
             } else if (this.viewMode === 'temperature') {
-                let Tmin = this.currentMatLine.solidusTemp - 100;
-                let Tmax = this.currentMatLine.liquidusTemp + 100;
-                let normT = Math.max(0, Math.min(1, (T - Tmin) / (Tmax - Tmin)));
+                const Tmin = this.currentMatLine.solidusTemp - 100;
+                const Tmax = this.currentMatLine.liquidusTemp + 100;
+                const normT = Math.max(0, Math.min(1, (T - Tmin) / (Tmax - Tmin)));
                 this.colorBuffer.setHSL((1.0 - normT) * 0.66, 1.0, 0.5);
             } else if (this.viewMode === 'velocity') {
-                let mag = Math.sqrt(vx*vx + vy*vy + vz*vz);
-                let normV = Math.min(1.0, mag / 3.0); 
+                const mag = Math.sqrt(vxVal*vxVal + vyVal*vyVal + vzVal*vzVal);
+                const normV = Math.min(1.0, mag / 3.0); 
                 this.colorBuffer.setHSL(0.3 + (1.0 - normV) * 0.4, 0.8, 0.5);
             } else if (this.viewMode === 'pressure') {
-                let maxP = parseFloat(document.getElementById('inject-pressure').value) || 100000;
-                let normP = Math.max(0, Math.min(1, pVal / maxP));
+                const maxP = parseFloat(document.getElementById('inject-pressure').value) || 100000;
+                const normP = Math.max(0, Math.min(1, pVal / maxP));
                 this.colorBuffer.setHSL((1.0 - normP) * 0.66, 1.0, 0.5); 
             } else if (this.viewMode === 'solid') {
-                let normS = Math.max(0, Math.min(1, sFraction));
+                const normS = Math.max(0, Math.min(1, sFraction));
                 this.colorBuffer.setHSL(0.1, 1.0 - normS, 0.5);
             }
 
@@ -913,6 +1032,37 @@ class CastFlowApp {
     showLoader(msg) {
         document.getElementById('loader-text').innerText = msg;
         this.loader.classList.remove('hidden');
+    }
+
+    exportData() {
+        if (!this.frames || this.frames.length === 0) {
+            alert('No simulation data to export. Run a simulation first.');
+            return;
+        }
+
+        const exportObj = {
+            metadata: {
+                nx: this.simulationData?.nx,
+                ny: this.simulationData?.ny,
+                nz: this.simulationData?.nz,
+                voxelSize: this.simulationData?.voxelSize,
+                bboxMin: this.simulationData?.bboxMin,
+                material: this.currentMatLine?.name,
+                totalFrames: this.frames.length
+            },
+            // Export last frame only to keep file size manageable
+            lastFrame: Array.from(this.frames[this.frames.length - 1])
+        };
+
+        const blob = new Blob([JSON.stringify(exportObj)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `castflow_export_${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
     }
 
     hideLoader() {
@@ -943,6 +1093,13 @@ class CastFlowApp {
         }
 
         this.controls.update();
+
+        // ─── Dynamic near/far to prevent zoom clipping ───────
+        const dist = this.camera.position.distanceTo(this.controls.target);
+        this.camera.near = Math.max(dist * 0.001, 0.0001);
+        this.camera.far = Math.max(dist * 100, 100);
+        this.camera.updateProjectionMatrix();
+
         this.renderer.render(this.scene, this.camera);
     }
 }

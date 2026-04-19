@@ -1,6 +1,11 @@
+/* ===== CastFlow Design System ===== */
+
+/* Dark Theme (Default) */
 :root {
   --bg-dark: #0f172a;
-  --bg-panel: rgba(30, 41, 59, 0.7);
+  --bg-panel: rgba(30, 41, 59, 0.85);
+  --bg-card: rgba(15, 23, 42, 0.9);
+  --bg-input: rgba(0, 0, 0, 0.25);
   --border-color: rgba(255, 255, 255, 0.1);
   --text-main: #f1f5f9;
   --text-muted: #94a3b8;
@@ -9,6 +14,34 @@
   --accent-glow: rgba(59, 130, 246, 0.5);
   --success: #10b981;
   --danger: #ef4444;
+  --scene-bg: #0f172a;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --shadow-panel: rgba(0, 0, 0, 0.3);
+  --shadow-playback: rgba(0, 0, 0, 0.4);
+  --surface-tools-bg: rgba(0, 0, 0, 0.2);
+  --surface-item-bg: rgba(255, 255, 255, 0.05);
+}
+
+/* Light Theme */
+[data-theme="light"] {
+  --bg-dark: #f0f4f8;
+  --bg-panel: rgba(255, 255, 255, 0.92);
+  --bg-card: rgba(241, 245, 249, 0.95);
+  --bg-input: rgba(0, 0, 0, 0.06);
+  --border-color: rgba(0, 0, 0, 0.12);
+  --text-main: #1e293b;
+  --text-muted: #64748b;
+  --accent: #2563eb;
+  --accent-hover: #3b82f6;
+  --accent-glow: rgba(37, 99, 235, 0.3);
+  --success: #059669;
+  --danger: #dc2626;
+  --scene-bg: #e2e8f0;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.2);
+  --shadow-panel: rgba(0, 0, 0, 0.08);
+  --shadow-playback: rgba(0, 0, 0, 0.12);
+  --surface-tools-bg: rgba(0, 0, 0, 0.05);
+  --surface-item-bg: rgba(0, 0, 0, 0.04);
 }
 
 * {
@@ -24,6 +57,7 @@ body {
   overflow: hidden;
   height: 100vh;
   width: 100vw;
+  transition: background-color 0.35s ease, color 0.35s ease;
 }
 
 #app-container {
@@ -44,6 +78,33 @@ canvas {
   outline: none;
 }
 
+/* Viewport floating toolbar */
+.viewport-toolbar {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
+}
+
+.viewport-toolbar .icon-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  width: 36px;
+  height: 36px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: all 0.25s ease;
+}
+
+.viewport-toolbar .icon-btn:hover {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
 /* UI Overlay elements in Viewport */
 #playback-controls {
   position: absolute;
@@ -59,8 +120,9 @@ canvas {
   display: flex;
   align-items: center;
   gap: 15px;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  box-shadow: 0 4px 20px var(--shadow-playback);
   z-index: 10;
+  transition: background 0.35s ease, border-color 0.35s ease;
 }
 
 .icon-btn {
@@ -100,7 +162,8 @@ canvas {
   display: flex;
   flex-direction: column;
   z-index: 20;
-  box-shadow: -4px 0 20px rgba(0,0,0,0.3);
+  box-shadow: -4px 0 20px var(--shadow-panel);
+  transition: background 0.35s ease, border-color 0.35s ease;
 }
 
 .sidebar-header {
@@ -109,6 +172,7 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  transition: border-color 0.35s ease;
 }
 
 .sidebar-header h1 {
@@ -121,6 +185,12 @@ canvas {
 
 .sidebar-header h1 span {
   color: var(--accent);
+}
+
+.sidebar-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .sidebar-content {
@@ -138,7 +208,7 @@ canvas {
   background: transparent;
 }
 .sidebar-content::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.2);
+  background: var(--scrollbar-thumb);
   border-radius: 3px;
 }
 
@@ -155,6 +225,7 @@ canvas {
   margin-bottom: 12px;
   border-bottom: 1px solid var(--border-color);
   padding-bottom: 6px;
+  transition: color 0.35s ease, border-color 0.35s ease;
 }
 
 /* Inputs */
@@ -168,10 +239,11 @@ canvas {
 .input-row label {
   font-size: 0.9rem;
   color: var(--text-main);
+  transition: color 0.35s ease;
 }
 
 .form-control {
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-input);
   border: 1px solid var(--border-color);
   color: var(--text-main);
   padding: 6px 10px;
@@ -179,7 +251,7 @@ canvas {
   font-family: inherit;
   font-size: 0.9rem;
   width: 120px;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, background 0.35s ease, color 0.35s ease;
 }
 
 .form-control:focus {
@@ -198,12 +270,41 @@ select.form-control {
   background-size: .65em auto, 100%;
 }
 
+[data-theme="light"] select.form-control {
+  background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%2364748b%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E");
+}
+
 .input-row .unit {
   font-size: 0.8rem;
   color: var(--text-muted);
   width: 35px;
   text-align: right;
   display: inline-block;
+}
+
+/* Auto dt indicator */
+.dt-auto-badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  background: var(--accent);
+  color: white;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.dt-auto-badge:hover {
+  opacity: 0.85;
+}
+
+.dt-auto-badge.manual {
+  background: var(--text-muted);
+  opacity: 0.7;
 }
 
 /* Buttons */
@@ -235,6 +336,13 @@ select.form-control {
   transform: translateY(1px);
 }
 
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .btn-secondary {
   background: rgba(255, 255, 255, 0.1);
   color: var(--text-main);
@@ -248,8 +356,21 @@ select.form-control {
   margin-top: 10px;
 }
 
+[data-theme="light"] .btn-secondary {
+  background: rgba(0, 0, 0, 0.05);
+}
+
 .btn-secondary:hover {
   background: rgba(255, 255, 255, 0.15);
+}
+
+[data-theme="light"] .btn-secondary:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Visualization Toggles */
@@ -261,7 +382,7 @@ select.form-control {
 
 .mode-btn {
   flex: 1 1 calc(50% - 4px);
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--bg-input);
   border: 1px solid var(--border-color);
   color: var(--text-muted);
   padding: 8px;
@@ -279,8 +400,12 @@ select.form-control {
 }
 
 .mode-btn:hover:not(.active) {
-  border-color: rgba(255,255,255,0.3);
+  border-color: rgba(255, 255, 255, 0.3);
   color: var(--text-main);
+}
+
+[data-theme="light"] .mode-btn:hover:not(.active) {
+  border-color: rgba(0, 0, 0, 0.25);
 }
 
 /* File Upload styling */
@@ -306,10 +431,10 @@ select.form-control {
   padding: 20px;
   border: 2px dashed var(--border-color);
   border-radius: 8px;
-  background: rgba(0,0,0,0.1);
+  background: var(--bg-input);
   transition: all 0.2s;
   text-align: center;
-  pointer-events: none; /* Let input handle clicks */
+  pointer-events: none;
 }
 
 .file-upload-wrapper:hover .file-upload-display {
@@ -328,6 +453,20 @@ select.form-control {
   font-size: 0.75rem;
   color: var(--text-muted);
   margin-top: 4px;
+}
+
+/* Toggle buttons row */
+.toggle-btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 15px;
+}
+
+.toggle-btn-row .btn-secondary {
+  flex: 1;
+  margin: 0;
+  padding: 8px 4px;
+  font-size: 0.85rem;
 }
 
 /* Loader */
@@ -352,7 +491,7 @@ select.form-control {
 .spinner {
   width: 50px;
   height: 50px;
-  border: 4px solid rgba(255,255,255,0.1);
+  border: 4px solid rgba(255, 255, 255, 0.1);
   border-radius: 50%;
   border-top-color: var(--accent);
   animation: spin 1s ease-in-out infinite;
@@ -366,4 +505,35 @@ select.form-control {
   font-size: 1.1rem;
   color: var(--text-main);
   letter-spacing: 1px;
+}
+
+/* Surface tools panel */
+.surface-tools-panel {
+  background: var(--surface-tools-bg);
+  padding: 10px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  transition: background 0.35s ease;
+}
+
+/* Theme toggle button */
+.theme-toggle {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  transition: all 0.25s ease;
+  font-size: 16px;
+}
+
+.theme-toggle:hover {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--accent);
+  border-color: var(--accent);
 }

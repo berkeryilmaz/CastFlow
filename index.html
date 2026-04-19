@@ -19,9 +19,11 @@
     <div id="app-container">
         <!-- 3D Scene Viewport -->
         <main id="viewport" style="position: relative;">
-            <button id="btn-recenter" class="icon-btn" title="Fit to Screen" style="position: absolute; top: 16px; right: 16px; z-index: 10; background: var(--bg-card); border: 1px solid var(--border-color); width: 36px; height: 36px;">
-                <i data-feather="maximize" style="width: 18px; height: 18px;"></i>
-            </button>
+            <div class="viewport-toolbar">
+                <button id="btn-recenter" class="icon-btn" title="Fit to Screen">
+                    <i data-feather="maximize" style="width: 18px; height: 18px;"></i>
+                </button>
+            </div>
             <div id="playback-controls" style="display: none;">
                 <button class="icon-btn" id="btn-play-pause" title="Play/Pause">
                     <i data-feather="play"></i>
@@ -42,9 +44,14 @@
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent);"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
                     Cast<span>Flow</span>
                 </h1>
-                <button id="btn-export" class="icon-btn" title="Export Data" style="width: 32px; height: 32px; font-size: 16px;">
-                    <i data-feather="download"></i>
-                </button>
+                <div class="sidebar-header-actions">
+                    <button id="btn-theme" class="theme-toggle" title="Toggle Theme">
+                        <i data-feather="moon" style="width: 16px; height: 16px;"></i>
+                    </button>
+                    <button id="btn-export" class="icon-btn" title="Export Data" style="width: 32px; height: 32px; font-size: 16px;">
+                        <i data-feather="download"></i>
+                    </button>
+                </div>
             </header>
 
             <div class="sidebar-content">
@@ -79,7 +86,7 @@
                         </button>
                     </div>
                     
-                    <div id="surface-tools" style="display: none; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 8px; margin-bottom: 10px;">
+                    <div id="surface-tools" class="surface-tools-panel" style="display: none;">
                         <div class="input-row">
                             <label>Tool</label>
                             <select id="select-mode" class="form-control" style="width: 100px; margin-bottom: 0;">
@@ -127,9 +134,9 @@
                     </div>
 
                     <div class="input-row" style="margin-top: 10px;">
-                        <label for="time-step">Time Step (dt)</label>
+                        <label for="time-step">Time Step (dt) <span id="dt-badge" class="dt-auto-badge" title="Click to toggle Auto/Manual">AUTO</span></label>
                         <div>
-                            <input type="number" id="time-step" class="form-control" value="0.01" step="0.001" min="0.001">
+                            <input type="number" id="time-step" class="form-control" value="0.001" step="0.0001" min="0.0001">
                             <span class="unit">s</span>
                         </div>
                     </div>
@@ -192,11 +199,11 @@
                         <button class="mode-btn" data-mode="pressure">Pressure</button>
                         <button class="mode-btn" data-mode="solid">Solid</button>
                     </div>
-                    <div style="display:flex; gap: 8px; margin-top: 15px;">
-                        <button id="btn-toggle-mold" class="btn-secondary" style="flex:1; margin:0; padding: 8px 4px; font-size: 0.85rem;">
+                    <div class="toggle-btn-row">
+                        <button id="btn-toggle-mold" class="btn-secondary">
                             <i data-feather="eye-off" style="width: 14px; height: 14px; vertical-align: middle;"></i> Toggle Mold
                         </button>
-                        <button id="btn-toggle-voxels" class="btn-secondary" style="flex:1; margin:0; padding: 8px 4px; font-size: 0.85rem;">
+                        <button id="btn-toggle-voxels" class="btn-secondary">
                             <i data-feather="eye-off" style="width: 14px; height: 14px; vertical-align: middle;"></i> Toggle Voxels
                         </button>
                     </div>
@@ -205,7 +212,10 @@
                 <!-- Debug -->
                 <section class="control-group" style="padding-bottom: 20px;">
                     <h3>6. Debug Overlays</h3>
-                    <button id="btn-wireframe" class="btn-secondary" style="margin-top:0;">Toggle Wireframe</button>
+                    <div style="display: flex; gap: 8px;">
+                        <button id="btn-wireframe" class="btn-secondary" style="margin-top:0; flex: 1;">Toggle Wireframe</button>
+                        <button id="btn-toggle-grid" class="btn-secondary" style="margin-top:0; flex: 1;">Toggle Grid</button>
+                    </div>
                     <div class="input-row" style="margin-top: 10px; margin-bottom: 0;">
                         <label title="Slices rendering via Y-Axis">Slice Y-Plane</label>
                         <input type="range" id="slice-slider" min="0" max="100" value="100" style="width:120px;">
