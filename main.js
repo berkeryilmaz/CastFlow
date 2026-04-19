@@ -28,7 +28,7 @@ class CastFlowApp {
         
         // Surface Injection System
         this.surfaceModeActive = false;
-        this.injectionSurfaces = []; 
+        this.injectionSurfaces = []; // type: 'inlet' or 'outlet'
         this.selectedFaces = new Set();
         this.isPainting = false;
         this.raycaster = new THREE.Raycaster();
@@ -498,7 +498,8 @@ class CastFlowApp {
             this.selectedFaces.clear();
             this.updateHighlightMesh();
         });
-        this.btnSurfaceAdd.addEventListener('click', () => this.saveInjectionSurface());
+        this.btnSurfaceAdd.addEventListener('click', () => this.saveInjectionSurface('inlet'));
+        document.getElementById('btn-outlet-add').addEventListener('click', () => this.saveInjectionSurface('outlet'));
         
         this.unitScaleSelect.addEventListener('change', (e) => {
             this.unitScale = parseFloat(e.target.value);
@@ -808,7 +809,7 @@ class CastFlowApp {
         this.highlightMesh.geometry = hlGeom;
     }
 
-    saveInjectionSurface() {
+    saveInjectionSurface(type = 'inlet') {
         if (this.selectedFaces.size === 0) return;
 
         // Calc average normal and center
@@ -824,7 +825,7 @@ class CastFlowApp {
         center.divideScalar(this.selectedFaces.size);
 
         // Map to Voxels
-        let inletVoxels = new Set();
+        let surfaceVoxels = new Set();
         const vs = this.simulationData.voxelSize;
         const { nx, ny, nz, bboxMin } = this.simulationData;
         const grid = this.simulationData.grid;
@@ -832,14 +833,12 @@ class CastFlowApp {
         const IX = (x,y,z) => x + nx * (y + ny * z);
 
         this.selectedFaces.forEach(fIdx => {
-            // Take the centroid and map to grid
             const pt = this.faceCenters[fIdx];
             let vxLoc = Math.floor((pt.x - bboxMin.x) / vs);
             let vyLoc = Math.floor((pt.y - bboxMin.y) / vs);
             let vzLoc = Math.floor((pt.z - bboxMin.z) / vs);
             
             let found = false;
-            // Expand search slightly to catch thick cavity
             for(let dx=-1; dx<=1; dx++) {
                 for(let dy=-1; dy<=1; dy++) {
                     for(let dz=-1; dz<=1; dz++) {
@@ -847,7 +846,7 @@ class CastFlowApp {
                         if(x>=0 && x<nx && y>=0 && y<ny && z>=0 && z<nz) {
                             const idx = IX(x,y,z);
                             if(grid[idx] === 0) {
-                                inletVoxels.add(idx); // must be empty mold space
+                                surfaceVoxels.add(idx);
                                 found = true;
                             }
                         }
@@ -855,20 +854,23 @@ class CastFlowApp {
                 }
             }
             
-            // Fallback: If Voxelizer perfectly blocked the gap, forcefully carve a hole 
             if (!found && vxLoc>=0 && vxLoc<nx && vyLoc>=0 && vyLoc<ny && vzLoc>=0 && vzLoc<nz) {
                 const idx = IX(vxLoc, vyLoc, vzLoc);
                 grid[idx] = 0;
-                inletVoxels.add(idx);
+                surfaceVoxels.add(idx);
             }
         });
 
-        const id = 'Sur_' + Math.floor(Math.random()*1000);
+        const prefix = type === 'outlet' ? 'Out' : 'Sur';
+        const id = prefix + '_' + Math.floor(Math.random()*1000);
+        const arrowColor = type === 'outlet' ? 0x10b981 : 0xef4444;
+        
         this.injectionSurfaces.push({
             id: id,
+            type: type,
             faceIndices: Array.from(this.selectedFaces),
-            normal: { x: -avgNormal.x, y: -avgNormal.y, z: -avgNormal.z }, // Invert normal to flow *into* cavity
-            voxels: Array.from(inletVoxels),
+            normal: { x: -avgNormal.x, y: -avgNormal.y, z: -avgNormal.z },
+            voxels: Array.from(surfaceVoxels),
             displayCenter: center,
             displayNormal: avgNormal
         });
@@ -876,7 +878,10 @@ class CastFlowApp {
         // Add visual arrow
         const invertedNormal = new THREE.Vector3(-avgNormal.x, -avgNormal.y, -avgNormal.z);
         const arrLength = this.meshBaseHeight ? Math.max(0.01, this.meshBaseHeight * 0.5) : 1.0;
-        const arrow = new THREE.ArrowHelper(invertedNormal, center, arrLength, 0xef4444, arrLength*0.3, arrLength*0.15);
+        const arrow = new THREE.ArrowHelper(
+            type === 'outlet' ? avgNormal : invertedNormal, // Outlet arrow points outward
+            center, arrLength, arrowColor, arrLength*0.3, arrLength*0.15
+        );
         arrow.name = id;
         this.surfaceArrows.add(arrow);
 
@@ -889,26 +894,17 @@ class CastFlowApp {
         this.surfaceList.innerHTML = '';
         this.injectionSurfaces.forEach((s) => {
             const el = document.createElement('div');
-            el.style.background = 'var(--surface-item-bg)';
-            el.style.border = '1px solid var(--border-color)';
-            el.style.padding = '8px';
-            el.style.borderRadius = '4px';
-            el.style.display = 'flex';
-            el.style.justifyContent = 'space-between';
-            el.style.alignItems = 'center';
-            el.style.fontSize = '0.85rem';
+            const isOutlet = s.type === 'outlet';
+            const borderColor = isOutlet ? 'rgba(16,185,129,0.4)' : 'var(--border-color)';
+            el.style.cssText = `background:var(--surface-item-bg);border:1px solid ${borderColor};padding:8px;border-radius:4px;display:flex;justify-content:space-between;align-items:center;font-size:0.85rem;`;
             
+            const typeLabel = isOutlet ? '<span style="color:#10b981;">OUTLET</span>' : '<span style="color:#ef4444;">INLET</span>';
             const nstr = `N: [${s.normal.x.toFixed(1)}, ${s.normal.y.toFixed(1)}, ${s.normal.z.toFixed(1)}]`;
-            el.innerHTML = `<div><strong>${s.id}</strong><br><small>${s.voxels.length} Voxels<br>${nstr}</small></div>`;
+            el.innerHTML = `<div><strong>${s.id}</strong> ${typeLabel}<br><small>${s.voxels.length} Voxels<br>${nstr}</small></div>`;
             
             const delBtn = document.createElement('button');
             delBtn.innerHTML = '<i data-feather="x"></i>';
-            delBtn.style.background = 'var(--danger)';
-            delBtn.style.color = 'white';
-            delBtn.style.border = 'none';
-            delBtn.style.borderRadius = '4px';
-            delBtn.style.padding = '4px';
-            delBtn.style.cursor = 'pointer';
+            delBtn.style.cssText = 'background:var(--danger);color:white;border:none;border-radius:4px;padding:4px;cursor:pointer;';
             
             delBtn.onclick = () => {
                 this.injectionSurfaces = this.injectionSurfaces.filter(sur => sur.id !== s.id);
@@ -927,17 +923,24 @@ class CastFlowApp {
         this.btnSimulate.disabled = true;
         
         let unifiedInlets = [];
+        let unifiedOutlets = [];
         this.injectionSurfaces.forEach(s => {
-            s.voxels.forEach(v => {
-                unifiedInlets.push({ idx: v, nx: s.normal.x, ny: s.normal.y, nz: s.normal.z });
-            });
+            if (s.type === 'outlet') {
+                s.voxels.forEach(v => unifiedOutlets.push(v));
+            } else {
+                s.voxels.forEach(v => {
+                    unifiedInlets.push({ idx: v, nx: s.normal.x, ny: s.normal.y, nz: s.normal.z });
+                });
+            }
         });
 
-        // Fallback default inlet if user skips UI
         if(unifiedInlets.length === 0) {
-            alert('No injection surfaces defined. Define a surface first!');
+            alert('No injection surfaces defined. Add at least one Inlet!');
             this.btnSimulate.disabled = false;
             return;
+        }
+        if(unifiedOutlets.length === 0) {
+            console.warn('No outlets defined — air may get trapped. Consider adding outlets.');
         }
 
         if (this.fluidMesh) this.scene.remove(this.fluidMesh);
@@ -993,6 +996,7 @@ class CastFlowApp {
             // GPU path
             this.gpuEngine.configure(simConfig);
             this.gpuEngine.setInlets(unifiedInlets);
+            this.gpuEngine.setOutlets(unifiedOutlets);
             this.btnSimulate.disabled = false;
             this.btnReset.disabled = false;
             this.btnPlayPause.innerHTML = '<i data-feather="pause"></i>';
@@ -1010,6 +1014,9 @@ class CastFlowApp {
             // CPU Worker path
             this.worker.postMessage({ type: 'INIT', config: simConfig });
             this.worker.postMessage({ type: 'SET_INLETS_WITH_NORMALS', inlets: unifiedInlets });
+            if (unifiedOutlets.length > 0) {
+                this.worker.postMessage({ type: 'SET_OUTLETS', outlets: unifiedOutlets });
+            }
         }
     }
 
@@ -1243,10 +1250,10 @@ class CastFlowApp {
     animate() {
         requestAnimationFrame(this.animate.bind(this));
         
-        // Disable controls while painting
-        if(this.surfaceModeActive && this.isPainting) {
+        // Disable controls only while actively painting in surface mode
+        if (this.surfaceModeActive && this.isPainting) {
             this.controls.enabled = false;
-        } else if (!this.surfaceModeActive) {
+        } else {
             this.controls.enabled = true;
         }
 

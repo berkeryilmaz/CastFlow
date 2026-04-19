@@ -40,6 +40,8 @@ let compressibility = 0.0001;
 let inletIndices = [];
 let inletNormals = new Map();
 let inletSpeed = 1.0;
+let outletIndices = [];
+let isOutlet;    // Uint8Array: 1 = outlet
 
 // Performance: cavity index list
 let cavityIndices = null;
@@ -71,10 +73,18 @@ self.onmessage = function(e) {
             const inf = inlets[i];
             inletIndices.push(inf.idx);
             isInlet[inf.idx] = 1;
-            moldGrid[inf.idx] = 0; // Ensure physical volume exists
+            moldGrid[inf.idx] = 0;
             inletNormals.set(inf.idx, { nx: inf.nx, ny: inf.ny, nz: inf.nz });
         }
-        // Rebuild cavity list after inlet modification
+        buildCavityIndex();
+    } else if (msg.type === 'SET_OUTLETS') {
+        outletIndices = [];
+        const outlets = msg.outlets;
+        for (let i = 0; i < outlets.length; i++) {
+            outletIndices.push(outlets[i]);
+            isOutlet[outlets[i]] = 1;
+            moldGrid[outlets[i]] = 0; // Ensure cavity
+        }
         buildCavityIndex();
     }
 };
@@ -104,6 +114,7 @@ function initSimulation(config) {
 
     // Alloc arrays
     isInlet = new Uint8Array(totalCells);
+    isOutlet = new Uint8Array(totalCells);
     fill = new Float32Array(totalCells);
     fillNew = new Float32Array(totalCells);
     T = new Float32Array(totalCells);
@@ -210,6 +221,7 @@ function IX(x, y, z) {
 // ─── Source Terms & BCs ─────────────────────────────────────
 
 function applySources() {
+    // Inlet BCs: fill=1, T=injectTemp, velocity from normal
     for (let k = 0; k < inletIndices.length; k++) {
         const i = inletIndices[k];
         fill[i] = 1.0;
@@ -221,6 +233,15 @@ function applySources() {
             vx[i] = n.nx * inletSpeed;
             vy[i] = n.ny * inletSpeed;
             vz[i] = n.nz * inletSpeed;
+        }
+    }
+    // Outlet BCs: pressure = 0 (atmospheric), allow air to escape
+    for (let k = 0; k < outletIndices.length; k++) {
+        const i = outletIndices[k];
+        p[i] = 0; // Dirichlet pressure BC
+        // If fluid reaches outlet, drain it (open boundary)
+        if (fill[i] > 0.95) {
+            fill[i] = 0.95; // Prevent full saturation, keep flow going
         }
     }
 }
@@ -491,22 +512,23 @@ function interpolate(array, cx, cy, cz) {
 function project() {
     const halfDx = 0.5 * voxelSize;
     const invDx = 1.0 / voxelSize;
-    const fillThreshold = 0.01; // Include partially filled cells
+    const fillThreshold = 0.01;
     
     // ── Divergence computation ──
+    // Now includes ALL cavity cells (filled + empty) for air pressure modeling
     let idx = 0;
     for (let z = 0; z < nz; z++) {
         for (let y = 0; y < ny; y++) {
             for (let x = 0; x < nx; x++) {
                 p[idx] = 0;
                 
-                if (moldGrid[idx] === 1 || fill[idx] < fillThreshold) {
+                if (moldGrid[idx] === 1) {
                     div[idx] = 0;
                     idx++;
                     continue;
                 }
                 
-                // Face velocities with wall BCs (zero velocity at mold walls)
+                // Compute divergence for ALL cavity cells (filled AND empty air)
                 const vxR = (x < nx-1 && moldGrid[idx + 1]     === 0) ? vx[idx + 1]    : 0;
                 const vxL = (x > 0    && moldGrid[idx - 1]     === 0) ? vx[idx - 1]    : 0;
                 const vyU = (y < ny-1 && moldGrid[idx + nx]    === 0) ? vy[idx + nx]   : 0;
@@ -522,6 +544,8 @@ function project() {
     }
 
     // ── Red-Black Gauss-Seidel Pressure Solve ──
+    // Now solves ALL cavity cells (including empty air)
+    // Outlet cells: Dirichlet BC p=0 (atmospheric)
     for (let k = 0; k < solverIters; k++) {
         for (let color = 0; color < 2; color++) {
             let i = 0;
@@ -529,13 +553,16 @@ function project() {
                 for (let y = 0; y < ny; y++) {
                     for (let x = 0; x < nx; x++) {
                         if (((x + y + z) & 1) === color) {
-                            if (moldGrid[i] === 0 && fill[i] > fillThreshold) {
-                                // Count valid (non-wall) neighbors and sum their pressures
+                            // Outlet: Dirichlet BC p=0
+                            if (isOutlet[i] === 1) {
+                                p[i] = 0;
+                            } else if (moldGrid[i] === 0) {
+                                // Solve pressure for ALL cavity cells
                                 let sumP = 0;
                                 let nCount = 0;
                                 
                                 if (x < nx-1 && moldGrid[i + 1] === 0) { sumP += p[i + 1]; nCount++; }
-                                else nCount++; // Wall neighbor contributes p=0
+                                else nCount++;
                                 
                                 if (x > 0 && moldGrid[i - 1] === 0) { sumP += p[i - 1]; nCount++; }
                                 else nCount++;
@@ -567,14 +594,14 @@ function project() {
     }
 
     // ── Velocity Correction ──
+    // Apply to ALL cavity cells (not just filled) so air can move too
     idx = 0;
     for (let z = 0; z < nz; z++) {
         for (let y = 0; y < ny; y++) {
             for (let x = 0; x < nx; x++) {
-                if (moldGrid[idx] === 0 && fill[idx] > fillThreshold && 
-                    sFraction[idx] < 0.99 && isInlet[idx] === 0) {
+                if (moldGrid[idx] === 0 && 
+                    sFraction[idx] < 0.99 && isInlet[idx] === 0 && isOutlet[idx] === 0) {
                     
-                    // Pressure gradient (using same values as neighbors, p=0 at walls/empty)
                     const pR = (x < nx-1 && moldGrid[idx + 1] === 0)    ? p[idx + 1]    : p[idx];
                     const pL = (x > 0    && moldGrid[idx - 1] === 0)    ? p[idx - 1]    : p[idx];
                     const pU = (y < ny-1 && moldGrid[idx + nx] === 0)   ? p[idx + nx]   : p[idx];
@@ -607,8 +634,16 @@ function computeHeatTransfer() {
     for (let z = 0; z < nz; z++) {
         for (let y = 0; y < ny; y++) {
             for (let x = 0; x < nx; x++) {
+                // Dirichlet BC: mold boundary cells stay at moldTemp
+                // This ensures heat flows OUT of the fluid into the mold
+                if (moldGrid[idx] === 1) {
+                    TNew[idx] = moldTemp;
+                    idx++;
+                    continue;
+                }
+                
                 if (x > 0 && x < nx-1 && y > 0 && y < ny-1 && z > 0 && z < nz-1) {
-                    if (fill[idx] > 0.01 || moldGrid[idx] === 1) {
+                    if (fill[idx] > 0.01) {
                         const laplacian = T[idx - 1] + T[idx + 1] +
                                           T[idx - nx] + T[idx + nx] +
                                           T[idx - nxny] + T[idx + nxny] -

@@ -37,6 +37,7 @@ fn toXYZ(idx: u32) -> vec3<u32> {
 }
 fn isMold(idx: u32) -> bool { return (gridFlags[idx] & 1u) != 0u; }
 fn isInletF(idx: u32) -> bool { return (gridFlags[idx] & 2u) != 0u; }
+fn isOutletF(idx: u32) -> bool { return (gridFlags[idx] & 4u) != 0u; }
 
 fn interpVel(cx: f32, cy: f32, cz: f32) -> vec3<f32> {
     let x0=i32(floor(cx)); let y0=i32(floor(cy)); let z0=i32(floor(cz));
@@ -84,7 +85,7 @@ fn compute_divergence(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     if (idx >= params.totalCells) { return; }
     var vn = velocityNew[idx];
-    if (isMold(idx) || scalars[idx].x < 0.01) {
+    if (isMold(idx)) {
         vn.w = 0.0; velocityNew[idx] = vn;
         var v = velocity[idx]; v.w = 0.0; velocity[idx] = v;
         return;
@@ -107,7 +108,7 @@ fn jacobi_a_to_b(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     if (idx >= params.totalCells) { return; }
     var sn = scalarsNew[idx];
-    if (isMold(idx) || scalars[idx].x < 0.01) { sn.w = 0.0; scalarsNew[idx] = sn; return; }
+    if (isMold(idx) || isOutletF(idx)) { sn.w = 0.0; scalarsNew[idx] = sn; return; }
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
     let nx=i32(params.nx); let ny=i32(params.ny); let nz=i32(params.nz);
     var sumP: f32 = 0.0;
@@ -126,7 +127,7 @@ fn jacobi_b_to_a(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     if (idx >= params.totalCells) { return; }
     var v = velocity[idx];
-    if (isMold(idx) || scalars[idx].x < 0.01) { v.w = 0.0; velocity[idx] = v; return; }
+    if (isMold(idx) || isOutletF(idx)) { v.w = 0.0; velocity[idx] = v; return; }
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
     let nx=i32(params.nx); let ny=i32(params.ny); let nz=i32(params.nz);
     var sumP: f32 = 0.0;
@@ -151,7 +152,7 @@ fn ensure_pressure(@builtin(global_invocation_id) gid: vec3<u32>) {
 fn pressure_correct(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     if (idx >= params.totalCells) { return; }
-    if (isMold(idx) || scalars[idx].x < 0.01 || scalars[idx].z >= 0.99 || isInletF(idx)) { return; }
+    if (isMold(idx) || scalars[idx].z >= 0.99 || isInletF(idx) || isOutletF(idx)) { return; }
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
     let nx=i32(params.nx); let ny=i32(params.ny); let nz=i32(params.nz);
     var v = velocity[idx]; let p0 = v.w;
@@ -263,9 +264,13 @@ fn heat_transfer(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     if (idx >= params.totalCells) { return; }
     var sn = scalarsNew[idx]; let s = scalars[idx];
+    // Dirichlet BC: mold cells stay at moldTemp
+    if (isMold(idx)) {
+        sn.y = params.moldTemp; scalarsNew[idx] = sn; return;
+    }
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
     if (x>0 && x<i32(params.nx)-1 && y>0 && y<i32(params.ny)-1 && z>0 && z<i32(params.nz)-1) {
-        if (s.x > 0.01 || isMold(idx)) {
+        if (s.x > 0.01) {
             let lap = scalars[IX(x-1,y,z)].y + scalars[IX(x+1,y,z)].y
                     + scalars[IX(x,y-1,z)].y + scalars[IX(x,y+1,z)].y
                     + scalars[IX(x,y,z-1)].y + scalars[IX(x,y,z+1)].y - 6.0*s.y;
@@ -534,10 +539,11 @@ export class GPUSimEngine {
     }
 
     setInlets(inlets) {
-        // Rebuild gridFlags with inlet bits
+        // Rebuild gridFlags with inlet bits (preserve outlet bits)
         const gf = new Uint32Array(this.totalCells);
         for (let i = 0; i < this.totalCells; i++) gf[i] = this.moldGridCPU[i];
         for (const inf of inlets) { gf[inf.idx] |= 2; gf[inf.idx] &= ~1; }
+        this._cachedGridFlags = gf;
         this.device.queue.writeBuffer(this.gridFlagsBuffer, 0, gf);
 
         // Upload inlet data
@@ -549,6 +555,13 @@ export class GPUSimEngine {
         this.device.queue.writeBuffer(this.inletDataBuffer, 0, arr);
         this.inletCount = inlets.length;
         this._writeUniforms();
+    }
+
+    setOutlets(outlets) {
+        // Add outlet bits (bit 2) to gridFlags
+        const gf = this._cachedGridFlags || new Uint32Array(this.totalCells);
+        for (const idx of outlets) { gf[idx] |= 4; gf[idx] &= ~1; }
+        this.device.queue.writeBuffer(this.gridFlagsBuffer, 0, gf);
     }
 
     _dispatch(encoder, pipeline, workgroups, groups) {
