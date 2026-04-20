@@ -159,7 +159,8 @@ class CastFlowApp {
         
         this.renderer = new THREE.WebGLRenderer({ antialias: true });
         this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Cap for perf
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        this.renderer.toneMapping = THREE.NoToneMapping;
         this.container.appendChild(this.renderer.domElement);
         
         this.controls = new OrbitControls(this.camera, this.renderer.domElement);
@@ -962,11 +963,8 @@ class CastFlowApp {
 
         const vs = this.simulationData.voxelSize;
         const g = new THREE.BoxGeometry(vs, vs, vs);
-        const m = new THREE.MeshPhongMaterial({ 
-            color: 0xffffff, 
-            emissive: 0xff5500,
-            emissiveIntensity: 0.7,
-            shininess: 80,
+        const m = new THREE.MeshBasicMaterial({ 
+            vertexColors: false,
             clippingPlanes: [this.clipPlane]
         });
         
@@ -1104,24 +1102,23 @@ class CastFlowApp {
             this.fluidMesh.setMatrixAt(i, this.dummy.matrix);
 
             if (this.viewMode === 'fill') {
-                // Bright orange→blue colormap for fill fraction
-                this.colorBuffer.setHSL(0.08 + fillVal * 0.52, 0.95, 0.35 + fillVal * 0.3);
+                this.colorBuffer.setHSL(0.08 + fillVal * 0.52, 0.95, 0.35 + fillVal * 0.3, THREE.SRGBColorSpace);
             } else if (this.viewMode === 'temperature') {
                 const Tmin = this.currentMatLine.solidusTemp - 100;
                 const Tmax = this.currentMatLine.liquidusTemp + 100;
                 const normT = Math.max(0, Math.min(1, (T - Tmin) / (Tmax - Tmin)));
-                this.colorBuffer.setHSL((1.0 - normT) * 0.66, 1.0, 0.5);
+                this.colorBuffer.setHSL((1.0 - normT) * 0.66, 1.0, 0.5, THREE.SRGBColorSpace);
             } else if (this.viewMode === 'velocity') {
                 const mag = Math.sqrt(vxVal*vxVal + vyVal*vyVal + vzVal*vzVal);
                 const normV = Math.min(1.0, mag / 3.0); 
-                this.colorBuffer.setHSL(0.3 + (1.0 - normV) * 0.4, 0.8, 0.5);
+                this.colorBuffer.setHSL(0.3 + (1.0 - normV) * 0.4, 0.8, 0.5, THREE.SRGBColorSpace);
             } else if (this.viewMode === 'pressure') {
                 const maxP = parseFloat(document.getElementById('inject-pressure').value) || 100000;
                 const normP = Math.max(0, Math.min(1, pVal / maxP));
-                this.colorBuffer.setHSL((1.0 - normP) * 0.66, 1.0, 0.5); 
+                this.colorBuffer.setHSL((1.0 - normP) * 0.66, 1.0, 0.5, THREE.SRGBColorSpace); 
             } else if (this.viewMode === 'solid') {
                 const normS = Math.max(0, Math.min(1, sFraction));
-                this.colorBuffer.setHSL(0.1, 1.0 - normS, 0.5);
+                this.colorBuffer.setHSL(0.1, 1.0 - normS, 0.5, THREE.SRGBColorSpace);
             }
 
             this.fluidMesh.setColorAt(i, this.colorBuffer);
@@ -1186,33 +1183,25 @@ class CastFlowApp {
 
         ctx.clearRect(0, 0, w, h);
 
+        // Use Three.js Color object to guarantee exact color match with voxels
+        const tempColor = new THREE.Color();
+
         for (let y = 0; y < h; y++) {
-            const t = 1.0 - y / h; // top = max value, bottom = min
-            let hue, sat, light;
+            const t = 1.0 - y / h; // top = max value (t=1), bottom = min (t=0)
 
             if (this.viewMode === 'fill') {
-                hue = (0.08 + t * 0.52) * 360;
-                sat = 95;
-                light = (0.35 + t * 0.3) * 100;
+                tempColor.setHSL(0.08 + t * 0.52, 0.95, 0.35 + t * 0.3, THREE.SRGBColorSpace);
             } else if (this.viewMode === 'temperature') {
-                hue = (1.0 - t) * 0.66 * 360;
-                sat = 100;
-                light = 50;
+                tempColor.setHSL((1.0 - t) * 0.66, 1.0, 0.5, THREE.SRGBColorSpace);
             } else if (this.viewMode === 'velocity') {
-                hue = (0.3 + (1.0 - t) * 0.4) * 360;
-                sat = 80;
-                light = 50;
+                tempColor.setHSL(0.3 + (1.0 - t) * 0.4, 0.8, 0.5, THREE.SRGBColorSpace);
             } else if (this.viewMode === 'pressure') {
-                hue = (1.0 - t) * 0.66 * 360;
-                sat = 100;
-                light = 50;
+                tempColor.setHSL((1.0 - t) * 0.66, 1.0, 0.5, THREE.SRGBColorSpace);
             } else if (this.viewMode === 'solid') {
-                hue = 36;
-                sat = (1.0 - t) * 100;
-                light = 50;
+                tempColor.setHSL(0.1, 1.0 - t, 0.5, THREE.SRGBColorSpace);
             }
 
-            ctx.fillStyle = `hsl(${hue}, ${sat}%, ${light}%)`;
+            ctx.fillStyle = '#' + tempColor.getHexString(THREE.SRGBColorSpace);
             ctx.fillRect(0, y, w, 1);
         }
 

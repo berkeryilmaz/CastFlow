@@ -27,6 +27,7 @@ let TNew;
 let sFraction;  // Float32Array: Solid fraction (0 to 1)
 let p;          // Float32Array: Pressure (solver units)
 let div;        // Float32Array: Divergence
+let airPressure; // Float32Array: Trapped air pressure (Pa) per cell
 let vx, vy, vz; // Float32Array: Velocity (m/s)
 let vxNew, vyNew, vzNew;
 
@@ -130,6 +131,11 @@ function initSimulation(config) {
     vxNew = new Float32Array(totalCells);
     vyNew = new Float32Array(totalCells);
     vzNew = new Float32Array(totalCells);
+    airPressure = new Float32Array(totalCells);
+    // Initialize: all cavity cells start at atmospheric pressure (101325 Pa)
+    for (let i = 0; i < totalCells; i++) {
+        if (moldGrid[i] === 0) airPressure[i] = 101325.0;
+    }
 
     // Initialize temperature
     for (let i = 0; i < totalCells; i++) {
@@ -516,8 +522,51 @@ function project() {
     const invDx = 1.0 / voxelSize;
     const fillThreshold = 0.01;
     
+    // ── Update trapped air pressure (ideal gas law) ──
+    // P = P₀ · V₀/V. As fluid fills a cell (fill increases), air volume (1-fill) decreases.
+    // Air pressure inversely proportional to remaining volume fraction.
+    // Only for cells NOT connected to an outlet (trapped air).
+    for (let c = 0; c < cavityCount; c++) {
+        const i = cavityIndices[c];
+        if (isOutlet[i] === 1) {
+            airPressure[i] = 101325.0; // Outlet: atmospheric, no buildup
+            continue;
+        }
+        if (fill[i] < 0.01) {
+            // Empty cell: check if air can escape to outlet via neighbors
+            // (simplified: leave at current pressure, will be computed by region below)
+            continue;
+        }
+        // Partially filled: air compresses. P = P_atm / (1 - fill)
+        const airFraction = Math.max(0.005, 1.0 - fill[i]); // Prevent division by zero
+        airPressure[i] = 101325.0 / airFraction;
+    }
+    
+    // ── Compute connected air regions and propagate pressure ──
+    // Cells connected to an outlet have atmospheric pressure.
+    // Isolated air pockets build up pressure as surrounding fill increases.
+    // Simple approach: for each empty cell, average air pressure from filled neighbors.
+    for (let c = 0; c < cavityCount; c++) {
+        const i = cavityIndices[c];
+        if (fill[i] > 0.5 || isOutlet[i] === 1) continue;
+        // Check if any neighbor is an outlet → connected to atmosphere
+        let connectedToOutlet = false;
+        const x = i % nx;
+        const y = Math.floor((i % nxny) / nx);
+        const z = Math.floor(i / nxny);
+        if (x > 0 && isOutlet[i-1] === 1) connectedToOutlet = true;
+        if (x < nx-1 && isOutlet[i+1] === 1) connectedToOutlet = true;
+        if (y > 0 && isOutlet[i-nx] === 1) connectedToOutlet = true;
+        if (y < ny-1 && isOutlet[i+nx] === 1) connectedToOutlet = true;
+        if (z > 0 && isOutlet[i-nxny] === 1) connectedToOutlet = true;
+        if (z < nz-1 && isOutlet[i+nxny] === 1) connectedToOutlet = true;
+        if (connectedToOutlet) {
+            airPressure[i] = 101325.0;
+        }
+    }
+    
     // ── Divergence computation ──
-    // Now includes ALL cavity cells (filled + empty) for air pressure modeling
+    // Includes air pressure source term for compressible air in empty cells
     let idx = 0;
     for (let z = 0; z < nz; z++) {
         for (let y = 0; y < ny; y++) {
@@ -530,7 +579,6 @@ function project() {
                     continue;
                 }
                 
-                // Compute divergence for ALL cavity cells (filled AND empty air)
                 const vxR = (x < nx-1 && moldGrid[idx + 1]     === 0) ? vx[idx + 1]    : 0;
                 const vxL = (x > 0    && moldGrid[idx - 1]     === 0) ? vx[idx - 1]    : 0;
                 const vyU = (y < ny-1 && moldGrid[idx + nx]    === 0) ? vy[idx + nx]   : 0;
@@ -539,6 +587,18 @@ function project() {
                 const vzB = (z > 0    && moldGrid[idx - nxny]  === 0) ? vz[idx - nxny] : 0;
                 
                 div[idx] = -halfDx * ((vxR - vxL) + (vyU - vyD) + (vzF - vzB));
+                
+                // Add air compression source term for empty/partially-filled cells
+                // Trapped air resists compression → adds positive pressure source
+                if (fill[idx] < 0.99 && isOutlet[idx] === 0) {
+                    const airP = airPressure[idx];
+                    if (airP > 101325.0) {
+                        // Normalized pressure excess drives divergence source
+                        // Higher compressibility = less resistance
+                        const pExcess = (airP - 101325.0) / 101325.0;
+                        div[idx] += pExcess * compressibility * voxelSize;
+                    }
+                }
                 
                 idx++;
             }
