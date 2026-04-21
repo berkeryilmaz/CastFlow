@@ -393,7 +393,8 @@ export class GPUSimEngine {
         const device = await adapter.requestDevice({
             requiredLimits: {
                 maxBufferSize: adapter.limits.maxBufferSize,
-                maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize
+                maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+                maxComputeWorkgroupsPerDimension: adapter.limits.maxComputeWorkgroupsPerDimension
             }
         });
         const engine = new GPUSimEngine();
@@ -438,7 +439,7 @@ export class GPUSimEngine {
         this.velocityNewBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE });
         this.scalarsBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         this.scalarsNewBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE });
-        this.inletDataBuffer = d.createBuffer({ size: Math.max(16, 1024 * 16), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+        this.inletDataBuffer = d.createBuffer({ size: Math.max(16, 131072 * 16), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         this.outputBuffer = d.createBuffer({ size: this.maxOutput * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
         this.counterBuffer = d.createBuffer({ size: 256, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
         this.outputStaging = d.createBuffer({ size: this.maxOutput * 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
