@@ -567,6 +567,8 @@ class CastFlowApp {
                 obj.traverse((child) => {
                     if (child.isMesh && !geometry) geometry = child.geometry;
                 });
+            } else if (ext === 'step' || ext === 'stp') {
+                geometry = await this.loadStepFile(file);
             }
 
             if (!geometry) throw new Error("Could not extract geometry.");
@@ -1187,6 +1189,66 @@ class CastFlowApp {
         this.camera.aspect = this.container.clientWidth / this.container.clientHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+    }
+    
+    async loadStepFile(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const content = new Uint8Array(e.target.result);
+                    const occt = await window.occtimportjs({
+                        locateFile: (path) => `https://cdn.jsdelivr.net/npm/occt-import-js@0.0.22/dist/${path}`
+                    });
+                    
+                    const result = occt.ReadStepFile(content, null);
+                    if (result.success && result.meshes.length > 0) {
+                        let totalVertices = 0;
+                        let totalIndices = 0;
+                        result.meshes.forEach(m => {
+                            totalVertices += m.attributes.position.array.length;
+                            totalIndices += m.index.array.length;
+                        });
+                        
+                        const mergedPositions = new Float32Array(totalVertices);
+                        const mergedNormals = new Float32Array(totalVertices);
+                        const mergedIndices = new Uint32Array(totalIndices);
+                        
+                        let vOffset = 0, iOffset = 0;
+                        result.meshes.forEach(m => {
+                            mergedPositions.set(m.attributes.position.array, vOffset);
+                            if (m.attributes.normal) {
+                                mergedNormals.set(m.attributes.normal.array, vOffset);
+                            }
+                            
+                            const baseVertex = vOffset / 3;
+                            for(let i=0; i<m.index.array.length; i++) {
+                                mergedIndices[iOffset + i] = m.index.array[i] + baseVertex;
+                            }
+                            
+                            vOffset += m.attributes.position.array.length;
+                            iOffset += m.index.array.length;
+                        });
+                        
+                        const geometry = new THREE.BufferGeometry();
+                        geometry.setAttribute('position', new THREE.BufferAttribute(mergedPositions, 3));
+                        if (totalVertices > 0 && mergedNormals[0] !== undefined && !isNaN(mergedNormals[0])) {
+                            geometry.setAttribute('normal', new THREE.BufferAttribute(mergedNormals, 3));
+                        } else {
+                            geometry.computeVertexNormals();
+                        }
+                        geometry.setIndex(new THREE.BufferAttribute(mergedIndices, 1));
+                        resolve(geometry);
+                    } else {
+                        reject(new Error('Failed to parse STEP file: No meshes found or parse failed.'));
+                    }
+                } catch(err) {
+                    reject(err);
+                }
+            };
+            reader.onerror = () => reject(new Error('Failed to read file'));
+            reader.readAsArrayBuffer(file);
+        });
     }
 
     showLoader(msg) {

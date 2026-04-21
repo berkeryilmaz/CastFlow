@@ -69,10 +69,10 @@
                 <section class="control-group">
                     <h3>1. Geometry</h3>
                     <div class="file-upload-wrapper">
-                        <input type="file" id="geometry-upload" accept=".stl,.obj">
+                        <input type="file" id="geometry-upload" accept=".stl,.obj,.step,.stp">
                         <div class="file-upload-display">
                             <i data-feather="upload-cloud"></i>
-                            <span>Upload STL/OBJ Mold</span>
+                            <span>Upload STL/OBJ/STEP Mold</span>
                             <span class="subtext">Auto-centers natively</span>
                         </div>
                     </div>
@@ -269,6 +269,9 @@
         }
     </script>
     
+    <!-- occt-import-js for STEP parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/occt-import-js@0.0.22/dist/occt-import-js.js"></script>
+
     <!-- Application Entry Point -->
     <script type="module" src="main.js"></script>
     <script>
