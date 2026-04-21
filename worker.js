@@ -44,6 +44,7 @@ let inletSpeed = 1.0;
 let outletIndices = [];
 let isOutlet;    // Uint8Array: 1 = outlet
 let moldMat;     // Mold material thermal properties
+let showAir = false; // Toggle to send air voxels to renderer
 
 // Performance: cavity index list
 let cavityIndices = null;
@@ -88,6 +89,8 @@ self.onmessage = function(e) {
             moldGrid[outlets[i]] = 0; // Ensure cavity
         }
         buildCavityIndex();
+    } else if (msg.type === 'SHOW_AIR') {
+        showAir = !!msg.value;
     }
 };
 
@@ -229,7 +232,8 @@ function IX(x, y, z) {
 // ─── Source Terms & BCs ─────────────────────────────────────
 
 function applySources() {
-    // Inlet BCs: fill=1, T=injectTemp, velocity from normal
+    // Pressure-driven inlet: v = v_base * max(0, 1 - p_local / p_inject)
+    // When cavity pressure builds up, inlet velocity drops naturally.
     for (let k = 0; k < inletIndices.length; k++) {
         const i = inletIndices[k];
         fill[i] = 1.0;
@@ -238,19 +242,19 @@ function applySources() {
         
         const n = inletNormals.get(i);
         if (n) {
-            vx[i] = n.nx * inletSpeed;
-            vy[i] = n.ny * inletSpeed;
-            vz[i] = n.nz * inletSpeed;
+            // Back-pressure ratio: local pressure vs injection pressure
+            const backPressureRatio = Math.max(0, 1.0 - Math.abs(p[i]) / (injectPressure + 1e-6));
+            const effectiveSpeed = inletSpeed * backPressureRatio;
+            vx[i] = n.nx * effectiveSpeed;
+            vy[i] = n.ny * effectiveSpeed;
+            vz[i] = n.nz * effectiveSpeed;
         }
     }
-    // Outlet BCs: pressure = 0 (atmospheric), allow air to escape
+    // Outlet BCs
     for (let k = 0; k < outletIndices.length; k++) {
         const i = outletIndices[k];
-        p[i] = 0; // Dirichlet pressure BC
-        // If fluid reaches outlet, drain it (open boundary)
-        if (fill[i] > 0.95) {
-            fill[i] = 0.95; // Prevent full saturation, keep flow going
-        }
+        p[i] = 0;
+        if (fill[i] > 0.95) fill[i] = 0.95;
     }
 }
 
@@ -258,8 +262,10 @@ function addGravity() {
     const gdt = -9.81 * dt;
     for (let c = 0; c < cavityCount; c++) {
         const i = cavityIndices[c];
-        if (fill[i] > 0.01 && sFraction[i] < 0.99) {
-            vy[i] += gdt;
+        if (fill[i] > 0.01 && sFraction[i] < 0.5) {
+            // Darcy damping: gravity effect reduced by (1-fs)^3 in mushy zone
+            const liquidFrac = 1.0 - sFraction[i];
+            vy[i] += gdt * liquidFrac * liquidFrac * liquidFrac;
         }
     }
 }
@@ -418,6 +424,7 @@ function advectFill() {
                     }
                 }
                 
+                // Flux limiter: cap outgoing so fill doesn't go negative
                 fillNew[idx] = Math.max(0.0, Math.min(1.0, fill[idx] + netFlux));
                 idx++;
             }
@@ -466,9 +473,15 @@ function advectVelocityTemperature() {
                     const py = y - dtInvDx * vy[idx];
                     const pz = z - dtInvDx * vz[idx];
                     
-                    vxNew[idx] = interpolate(vx, px, py, pz) * 0.998;
-                    vyNew[idx] = interpolate(vy, px, py, pz) * 0.998;
-                    vzNew[idx] = interpolate(vz, px, py, pz) * 0.998;
+                    // Darcy damping in mushy zone: (1-fs)^3
+                    const fs = sFraction[idx];
+                    const lf = 1.0 - fs;
+                    const darcyDamp = lf * lf * lf;
+                    const visDamp = 0.998 * darcyDamp;
+                    
+                    vxNew[idx] = interpolate(vx, px, py, pz) * visDamp;
+                    vyNew[idx] = interpolate(vy, px, py, pz) * visDamp;
+                    vzNew[idx] = interpolate(vz, px, py, pz) * visDamp;
                     TNew[idx] = interpolate(T, px, py, pz);
                 } else {
                     vxNew[idx] = 0;
@@ -656,13 +669,16 @@ function project() {
     }
 
     // ── Velocity Correction ──
-    // Apply to ALL cavity cells (not just filled) so air can move too
     idx = 0;
     for (let z = 0; z < nz; z++) {
         for (let y = 0; y < ny; y++) {
             for (let x = 0; x < nx; x++) {
-                if (moldGrid[idx] === 0 && 
-                    sFraction[idx] < 0.99 && isInlet[idx] === 0 && isOutlet[idx] === 0) {
+                if (moldGrid[idx] === 0 && isInlet[idx] === 0 && isOutlet[idx] === 0) {
+                    // Solid cells: zero velocity
+                    if (sFraction[idx] >= 0.99) {
+                        vx[idx] = 0; vy[idx] = 0; vz[idx] = 0;
+                        idx++; continue;
+                    }
                     
                     const pR = (x < nx-1 && moldGrid[idx + 1] === 0)    ? p[idx + 1]    : p[idx];
                     const pL = (x > 0    && moldGrid[idx - 1] === 0)    ? p[idx - 1]    : p[idx];
@@ -675,6 +691,13 @@ function project() {
                     vx[idx] -= (pR - pL) * gradScale;
                     vy[idx] -= (pU - pD) * gradScale;
                     vz[idx] -= (pF - pB) * gradScale;
+                    
+                    // Darcy damping after correction for mushy zone
+                    if (sFraction[idx] > 0.01) {
+                        const lf = 1.0 - sFraction[idx];
+                        const d = lf * lf * lf;
+                        vx[idx] *= d; vy[idx] *= d; vz[idx] *= d;
+                    }
                 }
                 idx++;
             }
@@ -748,36 +771,34 @@ function computeSolidification() {
     const range = liquidusTemp - solidusTemp;
     if (range <= 0) return;
     const invRange = 1.0 / range;
-    
-    // Latent heat: energy released during solidification absorbs cooling
-    // dT_latent = L * dfs / Cp  (fs = solid fraction change)
     const latentHeat = mat.latentHeat || 0;
     const specificHeat = mat.specificHeat || 1;
 
     for (let c = 0; c < cavityCount; c++) {
         const i = cavityIndices[c];
-        if (fill[i] > 0.1) {
+        if (fill[i] > 0.05) {
             const oldSFrac = sFraction[i];
             
             if (T[i] <= solidusTemp) {
                 sFraction[i] = 1.0;
+                // Hard kill velocity — fully solid
                 vx[i] = 0; vy[i] = 0; vz[i] = 0;
             } else if (T[i] < liquidusTemp) {
                 sFraction[i] = 1.0 - ((T[i] - solidusTemp) * invRange);
-                const damp = 1.0 - sFraction[i];
-                vx[i] *= damp;
-                vy[i] *= damp;
-                vz[i] *= damp;
+                // Darcy damping: cubic (1-fs)^3 for mushy zone permeability
+                const lf = 1.0 - sFraction[i];
+                const d = lf * lf * lf;
+                vx[i] *= d;
+                vy[i] *= d;
+                vz[i] *= d;
             } else {
                 sFraction[i] = 0.0;
             }
             
-            // Apply latent heat release: solidification releases energy,
-            // slowing down cooling in the mushy zone
+            // Latent heat release
             if (latentHeat > 0) {
                 const dSFrac = sFraction[i] - oldSFrac;
                 if (dSFrac > 0) {
-                    // Energy released = L * dfs, temperature rise = L * dfs / Cp
                     T[i] += (latentHeat * dSFrac) / specificHeat;
                 }
             }
@@ -792,15 +813,17 @@ function sendVisualData() {
     for (let c = 0; c < cavityCount; c++) {
         const i = cavityIndices[c];
         if (fill[i] > 0.02 || sFraction[i] > 0) activeCount++;
+        else if (showAir) activeCount++; // Air voxels
     }
 
     const buf = new Float32Array(activeCount * 8);
     let ptr = 0;
     for (let c = 0; c < cavityCount; c++) {
         const i = cavityIndices[c];
-        if (fill[i] > 0.02 || sFraction[i] > 0) {
+        const hasFluid = fill[i] > 0.02 || sFraction[i] > 0;
+        if (hasFluid || showAir) {
             buf[ptr++] = i;
-            buf[ptr++] = fill[i];
+            buf[ptr++] = hasFluid ? fill[i] : -1; // -1 flags as air voxel
             buf[ptr++] = T[i];
             buf[ptr++] = vx[i];
             buf[ptr++] = vy[i];

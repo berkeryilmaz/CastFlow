@@ -66,6 +66,8 @@ class CastFlowApp {
         this.btnStep = document.getElementById('btn-step');
         this.btnToggleMold = document.getElementById('btn-toggle-mold');
         this.btnToggleVoxels = document.getElementById('btn-toggle-voxels');
+        this.btnToggleAir = document.getElementById('btn-toggle-air');
+        this.showAir = false;
         this.btnRecenter = document.getElementById('btn-recenter');
         this.btnToggleGrid = document.getElementById('btn-toggle-grid');
         this.btnTheme = document.getElementById('btn-theme');
@@ -410,6 +412,16 @@ class CastFlowApp {
                     '<i data-feather="eye" style="width: 14px; height: 14px; vertical-align: middle;"></i> Toggle Voxels';
                 feather.replace();
             }
+        });
+
+        // Air Toggle
+        this.btnToggleAir.addEventListener('click', () => {
+            this.showAir = !this.showAir;
+            this.btnToggleAir.innerHTML = this.showAir ?
+                '<i data-feather="wind" style="width: 14px; height: 14px; vertical-align: middle;"></i> Hide Air' :
+                '<i data-feather="wind" style="width: 14px; height: 14px; vertical-align: middle;"></i> Show Air';
+            feather.replace();
+            if (this.worker) this.worker.postMessage({ type: 'SHOW_AIR', value: this.showAir });
         });
 
         // Grid Toggle
@@ -965,6 +977,9 @@ class CastFlowApp {
         const g = new THREE.BoxGeometry(vs, vs, vs);
         const m = new THREE.MeshBasicMaterial({ 
             vertexColors: false,
+            transparent: true,
+            opacity: 0.85,
+            depthWrite: true,
             clippingPlanes: [this.clipPlane]
         });
         
@@ -1096,6 +1111,19 @@ class CastFlowApp {
             const bz = bboxMin.z + z * vs + vs/2;
             
             this.dummy.position.set(bx, by, bz);
+            
+            // Air voxels: fillVal == -1 (sent by worker when showAir is on)
+            const isAir = fillVal < 0;
+            if (isAir) {
+                this.dummy.scale.set(0.8, 0.8, 0.8);
+                this.dummy.updateMatrix();
+                this.fluidMesh.setMatrixAt(i, this.dummy.matrix);
+                // Transparent light blue for air cavity
+                this.colorBuffer.setRGB(0.3, 0.5, 0.8);
+                this.fluidMesh.setColorAt(i, this.colorBuffer);
+                continue;
+            }
+            
             const scaleFill = Math.pow(fillVal, 0.33); 
             this.dummy.scale.set(scaleFill, scaleFill, scaleFill);
             this.dummy.updateMatrix();
