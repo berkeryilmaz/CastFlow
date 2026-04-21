@@ -182,14 +182,17 @@ fn extend_velocity(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (scalars[idx].x >= 0.01 || isInletF(idx)) { return; }
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
     let nx=i32(params.nx); let ny=i32(params.ny); let nz=i32(params.nz);
-    var sumV = vec3<f32>(0.0); var cnt: f32 = 0.0;
-    if (x>0)    { let ni=IX(x-1,y,z); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; cnt+=1.0; } }
-    if (x<nx-1) { let ni=IX(x+1,y,z); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; cnt+=1.0; } }
-    if (y>0)    { let ni=IX(x,y-1,z); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; cnt+=1.0; } }
-    if (y<ny-1) { let ni=IX(x,y+1,z); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; cnt+=1.0; } }
-    if (z>0)    { let ni=IX(x,y,z-1); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; cnt+=1.0; } }
-    if (z<nz-1) { let ni=IX(x,y,z+1); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; cnt+=1.0; } }
-    if (cnt > 0.0) { velocity[idx] = vec4<f32>(sumV/cnt, velocity[idx].w); }
+    var sumV = vec3<f32>(0.0); var cnt: f32 = 0.0; var sumT: f32 = 0.0;
+    if (x>0)    { let ni=IX(x-1,y,z); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; sumT+=scalars[ni].y; cnt+=1.0; } }
+    if (x<nx-1) { let ni=IX(x+1,y,z); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; sumT+=scalars[ni].y; cnt+=1.0; } }
+    if (y>0)    { let ni=IX(x,y-1,z); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; sumT+=scalars[ni].y; cnt+=1.0; } }
+    if (y<ny-1) { let ni=IX(x,y+1,z); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; sumT+=scalars[ni].y; cnt+=1.0; } }
+    if (z>0)    { let ni=IX(x,y,z-1); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; sumT+=scalars[ni].y; cnt+=1.0; } }
+    if (z<nz-1) { let ni=IX(x,y,z+1); if (!isMold(ni) && scalars[ni].x>0.01) { sumV+=velocity[ni].xyz; sumT+=scalars[ni].y; cnt+=1.0; } }
+    if (cnt > 0.0) { 
+        velocity[idx] = vec4<f32>(sumV/cnt, velocity[idx].w); 
+        var s = scalars[idx]; s.y = sumT/cnt; scalars[idx] = s;
+    }
 }
 
 @compute @workgroup_size(${WG_SIZE})

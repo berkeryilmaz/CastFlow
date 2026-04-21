@@ -289,44 +289,44 @@ function extendVelocity() {
             for (let x = 0; x < nx; x++) {
                 // Only extend to empty cavity cells
                 if (moldGrid[idx] === 0 && fill[idx] < 0.01 && isInlet[idx] === 0) {
-                    let sumVx = 0, sumVy = 0, sumVz = 0;
+                    let sumVx = 0, sumVy = 0, sumVz = 0, sumT = 0;
                     let count = 0;
                     
                     // Check 6 neighbors for filled cells
                     if (x > 0) {
                         const ni = idx - 1;
                         if (moldGrid[ni] === 0 && fill[ni] > 0.01) {
-                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; count++;
+                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; sumT += T[ni]; count++;
                         }
                     }
                     if (x < nx-1) {
                         const ni = idx + 1;
                         if (moldGrid[ni] === 0 && fill[ni] > 0.01) {
-                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; count++;
+                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; sumT += T[ni]; count++;
                         }
                     }
                     if (y > 0) {
                         const ni = idx - nx;
                         if (moldGrid[ni] === 0 && fill[ni] > 0.01) {
-                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; count++;
+                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; sumT += T[ni]; count++;
                         }
                     }
                     if (y < ny-1) {
                         const ni = idx + nx;
                         if (moldGrid[ni] === 0 && fill[ni] > 0.01) {
-                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; count++;
+                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; sumT += T[ni]; count++;
                         }
                     }
                     if (z > 0) {
                         const ni = idx - nxny;
                         if (moldGrid[ni] === 0 && fill[ni] > 0.01) {
-                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; count++;
+                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; sumT += T[ni]; count++;
                         }
                     }
                     if (z < nz-1) {
                         const ni = idx + nxny;
                         if (moldGrid[ni] === 0 && fill[ni] > 0.01) {
-                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; count++;
+                            sumVx += vx[ni]; sumVy += vy[ni]; sumVz += vz[ni]; sumT += T[ni]; count++;
                         }
                     }
                     
@@ -335,6 +335,7 @@ function extendVelocity() {
                         vx[idx] = sumVx * inv;
                         vy[idx] = sumVy * inv;
                         vz[idx] = sumVz * inv;
+                        T[idx]  = sumT * inv;
                     }
                 }
                 idx++;
