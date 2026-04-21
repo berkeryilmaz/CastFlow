@@ -390,7 +390,12 @@ export class GPUSimEngine {
     static async create() {
         const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
         if (!adapter) throw new Error('No GPU adapter found');
-        const device = await adapter.requestDevice();
+        const device = await adapter.requestDevice({
+            requiredLimits: {
+                maxBufferSize: adapter.limits.maxBufferSize,
+                maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize
+            }
+        });
         const engine = new GPUSimEngine();
         engine.device = device;
         return engine;
