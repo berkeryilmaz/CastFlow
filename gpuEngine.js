@@ -64,7 +64,7 @@ fn interpTemp(cx: f32, cy: f32, cz: f32) -> f32 {
 // ─── Kernels ────────────────────────────────────────────────
 @compute @workgroup_size(${WG_SIZE})
 fn apply_sources(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let i = gid.x;
+    let i = gid.x + gid.y * params._pad2;
     if (i >= params.inletCount) { return; }
     let d = inletData[i]; let ci = u32(d.x);
     let backPressureRatio = max(0.0, 1.0 - abs(velocity[ci].w) / (params.injectPressure + 0.000001));
@@ -80,7 +80,7 @@ fn apply_sources(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn add_gravity(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells || isMold(idx)) { return; }
     let s = scalars[idx];
     if (s.x > 0.01 && s.z < 0.99) {
@@ -90,7 +90,7 @@ fn add_gravity(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn compute_divergence(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     var vn = velocityNew[idx];
     if (isMold(idx)) {
@@ -113,7 +113,7 @@ fn compute_divergence(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn jacobi_a_to_b(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     var sn = scalarsNew[idx];
     if (isMold(idx) || isOutletF(idx)) { sn.w = 0.0; scalarsNew[idx] = sn; return; }
@@ -132,7 +132,7 @@ fn jacobi_a_to_b(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn jacobi_b_to_a(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     var v = velocity[idx];
     if (isMold(idx) || isOutletF(idx)) { v.w = 0.0; velocity[idx] = v; return; }
@@ -151,14 +151,14 @@ fn jacobi_b_to_a(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn ensure_pressure(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     var v = velocity[idx]; v.w = scalarsNew[idx].w; velocity[idx] = v;
 }
 
 @compute @workgroup_size(${WG_SIZE})
 fn pressure_correct(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     if (isMold(idx) || scalars[idx].z >= 0.99 || isInletF(idx) || isOutletF(idx)) { return; }
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
@@ -177,7 +177,7 @@ fn pressure_correct(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn extend_velocity(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells || isMold(idx)) { return; }
     if (scalars[idx].x >= 0.01 || isInletF(idx)) { return; }
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
@@ -197,7 +197,7 @@ fn extend_velocity(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn advect_fill(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     var sn = scalarsNew[idx];
     if (isMold(idx) || isInletF(idx) || scalars[idx].z >= 0.99) { sn.x = scalars[idx].x; scalarsNew[idx] = sn; return; }
@@ -230,7 +230,7 @@ fn advect_fill(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn advect_velocity_temp(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     if (isMold(idx) || isInletF(idx)) {
         velocityNew[idx] = velocity[idx];
@@ -256,14 +256,14 @@ fn advect_velocity_temp(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn swap_fill(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     var s = scalars[idx]; s.x = scalarsNew[idx].x; scalars[idx] = s;
 }
 
 @compute @workgroup_size(${WG_SIZE})
 fn swap_velocity_temp(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     var v = velocity[idx]; let vn = velocityNew[idx];
     v.x = vn.x; v.y = vn.y; v.z = vn.z; velocity[idx] = v;
@@ -272,7 +272,7 @@ fn swap_velocity_temp(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn heat_transfer(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     var sn = scalarsNew[idx]; let s = scalars[idx];
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
@@ -312,14 +312,14 @@ fn heat_transfer(@builtin(global_invocation_id) gid: vec3<u32>) {
 
 @compute @workgroup_size(${WG_SIZE})
 fn swap_temp(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     var s = scalars[idx]; s.y = scalarsNew[idx].y; scalars[idx] = s;
 }
 
 @compute @workgroup_size(${WG_SIZE})
 fn solidification(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells || isMold(idx)) { return; }
     var s = scalars[idx];
     if (s.x <= 0.1) { return; }
@@ -358,7 +358,7 @@ fn reset_counter() { atomicStore(&counter[0], 0u); }
 
 @compute @workgroup_size(${WG_SIZE})
 fn extract_visual(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let idx = gid.x;
+    let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     if ((gridFlags[idx] & 1u) != 0u) { return; }
     let s = scalars[idx]; let v = velocity[idx];
@@ -486,8 +486,11 @@ export class GPUSimEngine {
         v.setFloat32(60, this.mat.liquidusTemp, true);
         v.setFloat32(64, this.thermalDiffFactorMold, true);
         v.setFloat32(68, this.injectPressure, true);
-        v.setUint32(72, 0, true);
-        v.setUint32(76, 0, true);
+        
+        const pad1 = Math.min(this.gridWorkgroups || 0, 65535) * WG_SIZE;
+        const pad2 = Math.min(Math.max(1, Math.ceil(this.inletCount / WG_SIZE)), 65535) * WG_SIZE;
+        v.setUint32(72, pad1, true);
+        v.setUint32(76, pad2, true);
         this.device.queue.writeBuffer(this.uniformsBuffer, 0, buf);
     }
 
@@ -605,19 +608,23 @@ export class GPUSimEngine {
         this.device.queue.writeBuffer(this.gridFlagsBuffer, 0, gf);
     }
 
-    _dispatch(encoder, pipeline, workgroups, groups) {
+    _dispatch(encoder, pipeline, workgroupsArray, groups) {
         const pass = encoder.beginComputePass();
         pass.setPipeline(pipeline);
         for (let i = 0; i < groups.length; i++) pass.setBindGroup(i, groups[i]);
-        pass.dispatchWorkgroups(workgroups);
+        pass.dispatchWorkgroups(workgroupsArray[0], workgroupsArray[1], workgroupsArray[2]);
         pass.end();
     }
 
     step(numSteps) {
         const encoder = this.device.createCommandEncoder();
         const pg = this.physicsGroups;
-        const gw = this.gridWorkgroups;
-        const inletWG = Math.max(1, Math.ceil(this.inletCount / WG_SIZE));
+        
+        const tg = this.gridWorkgroups;
+        const gw = [Math.min(tg, 65535), Math.ceil(tg / 65535), 1];
+        
+        const inTg = Math.max(1, Math.ceil(this.inletCount / WG_SIZE));
+        const inletWG = [Math.min(inTg, 65535), Math.ceil(inTg / 65535), 1];
 
         for (let s = 0; s < numSteps; s++) {
             // 1. Sources
@@ -653,8 +660,9 @@ export class GPUSimEngine {
 
         // 10. Extract visual data
         const eg = this.extractGroups;
-        this._dispatch(encoder, this.resetCounterPipeline, 1, eg);
-        this._dispatch(encoder, this.extractPipeline, gw, eg);
+        const extractWG = [Math.min(tg, 65535), Math.ceil(tg / 65535), 1];
+        this._dispatch(encoder, this.resetCounterPipeline, [1, 1, 1], eg);
+        this._dispatch(encoder, this.extractPipeline, extractWG, eg);
 
         // Copy to staging
         const outBytes = Math.min(this.maxOutput * 32, this.outputBuffer.size);
