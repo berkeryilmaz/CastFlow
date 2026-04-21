@@ -16,7 +16,7 @@ struct SimParams {
     dt: f32, voxelSize: f32, injectTemp: f32, moldTemp: f32,
     inletSpeed: f32, inletCount: u32, gravity: f32, thermalDiffFactor: f32,
     latentHeat: f32, specificHeat: f32, solidusTemp: f32, liquidusTemp: f32,
-    thermalDiffFactorMold: f32, _pad0: u32, _pad1: u32, _pad2: u32,
+    thermalDiffFactorMold: f32, injectPressure: f32, _pad1: u32, _pad2: u32,
 };
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(1) @binding(0) var<storage, read_write> gridFlags: array<u32>;
@@ -67,8 +67,15 @@ fn apply_sources(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x;
     if (i >= params.inletCount) { return; }
     let d = inletData[i]; let ci = u32(d.x);
-    scalars[ci] = vec4<f32>(1.0, params.injectTemp, 0.0, scalars[ci].w);
-    velocity[ci] = vec4<f32>(d.y*params.inletSpeed, d.z*params.inletSpeed, d.w*params.inletSpeed, velocity[ci].w);
+    let backPressureRatio = max(0.0, 1.0 - abs(velocity[ci].w) / (params.injectPressure + 0.000001));
+    let effectiveSpeed = params.inletSpeed * backPressureRatio;
+    
+    if (effectiveSpeed > 0.01 * params.inletSpeed) {
+        scalars[ci] = vec4<f32>(1.0, params.injectTemp, 0.0, scalars[ci].w);
+        velocity[ci] = vec4<f32>(d.y*effectiveSpeed, d.z*effectiveSpeed, d.w*effectiveSpeed, velocity[ci].w);
+    } else {
+        velocity[ci] = vec4<f32>(0.0, 0.0, 0.0, velocity[ci].w);
+    }
 }
 
 @compute @workgroup_size(${WG_SIZE})
@@ -190,7 +197,7 @@ fn advect_fill(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x;
     if (idx >= params.totalCells) { return; }
     var sn = scalarsNew[idx];
-    if (isMold(idx) || isInletF(idx)) { sn.x = scalars[idx].x; scalarsNew[idx] = sn; return; }
+    if (isMold(idx) || isInletF(idx) || scalars[idx].z >= 0.99) { sn.x = scalars[idx].x; scalarsNew[idx] = sn; return; }
     let pos = toXYZ(idx); let x=i32(pos.x); let y=i32(pos.y); let z=i32(pos.z);
     let nx=i32(params.nx); let ny=i32(params.ny); let nz=i32(params.nz);
     let dtDx = params.dt / params.voxelSize;
@@ -333,7 +340,7 @@ struct SimParams {
     dt: f32, voxelSize: f32, injectTemp: f32, moldTemp: f32,
     inletSpeed: f32, inletCount: u32, gravity: f32, thermalDiffFactor: f32,
     latentHeat: f32, specificHeat: f32, solidusTemp: f32, liquidusTemp: f32,
-    thermalDiffFactorMold: f32, _pad0: u32, _pad1: u32, _pad2: u32,
+    thermalDiffFactorMold: f32, injectPressure: f32, _pad1: u32, _pad2: u32,
 };
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(1) @binding(0) var<storage, read> gridFlags: array<u32>;
@@ -396,8 +403,9 @@ export class GPUSimEngine {
         this.solverIters = config.solverIters || 20;
         this.mat = config.material;
         this.inletCount = 0;
-        this.stepCount = 0;
-        this.inletSpeed = Math.min(10.0, Math.sqrt(2.0 * (config.injectPressure || 100000) / this.mat.density));
+        // Check config object safely
+        this.injectPressure = config.injectPressure || 100000;
+        this.inletSpeed = Math.min(10.0, Math.sqrt(2.0 * this.injectPressure / this.mat.density));
 
         // Thermal diffusion factors
         const alpha = this.mat.thermalConductivity / (this.mat.density * this.mat.specificHeat);
@@ -467,7 +475,7 @@ export class GPUSimEngine {
         v.setFloat32(56, this.mat.solidusTemp, true);
         v.setFloat32(60, this.mat.liquidusTemp, true);
         v.setFloat32(64, this.thermalDiffFactorMold, true);
-        v.setUint32(68, 0, true); // padding
+        v.setFloat32(68, this.injectPressure, true);
         v.setUint32(72, 0, true);
         v.setUint32(76, 0, true);
         this.device.queue.writeBuffer(this.uniformsBuffer, 0, buf);

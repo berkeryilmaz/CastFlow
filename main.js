@@ -854,32 +854,62 @@ class CastFlowApp {
         
         const IX = (x,y,z) => x + nx * (y + ny * z);
 
+        const geom = this.moldMesh.geometry;
+        const posView = geom.attributes.position.array;
+        const indexView = geom.index.array;
+
         this.selectedFaces.forEach(fIdx => {
-            const pt = this.faceCenters[fIdx];
-            let vxLoc = Math.floor((pt.x - bboxMin.x) / vs);
-            let vyLoc = Math.floor((pt.y - bboxMin.y) / vs);
-            let vzLoc = Math.floor((pt.z - bboxMin.z) / vs);
+            const a = indexView[fIdx*3];
+            const b = indexView[fIdx*3+1];
+            const c = indexView[fIdx*3+2];
             
-            let found = false;
-            for(let dx=-1; dx<=1; dx++) {
-                for(let dy=-1; dy<=1; dy++) {
-                    for(let dz=-1; dz<=1; dz++) {
-                        let x = vxLoc+dx, y = vyLoc+dy, z = vzLoc+dz;
-                        if(x>=0 && x<nx && y>=0 && y<ny && z>=0 && z<nz) {
-                            const idx = IX(x,y,z);
-                            if(grid[idx] === 0) {
-                                surfaceVoxels.add(idx);
-                                found = true;
+            const vA = new THREE.Vector3(posView[a*3], posView[a*3+1], posView[a*3+2]);
+            const vB = new THREE.Vector3(posView[b*3], posView[b*3+1], posView[b*3+2]);
+            const vC = new THREE.Vector3(posView[c*3], posView[c*3+1], posView[c*3+2]);
+            
+            const dAB = vA.distanceTo(vB);
+            const dAC = vA.distanceTo(vC);
+            const dBC = vB.distanceTo(vC);
+            
+            const maxEdge = Math.max(dAB, dAC, dBC);
+            const steps = Math.max(1, Math.ceil(maxEdge / (vs * 0.33))); 
+            
+            for(let u=0; u<=steps; u++) {
+                for(let w=0; w<=steps - u; w++) {
+                    const wu = u/steps;
+                    const ww = w/steps;
+                    const wv = 1.0 - wu - ww;
+                    
+                    const px = wv * vA.x + wu * vB.x + ww * vC.x;
+                    const py = wv * vA.y + wu * vB.y + ww * vC.y;
+                    const pz = wv * vA.z + wu * vB.z + ww * vC.z;
+                    
+                    let vxLoc = Math.floor((px - bboxMin.x) / vs);
+                    let vyLoc = Math.floor((py - bboxMin.y) / vs);
+                    let vzLoc = Math.floor((pz - bboxMin.z) / vs);
+                    
+                    let found = false;
+                    for(let dx=-1; dx<=1; dx++) {
+                        for(let dy=-1; dy<=1; dy++) {
+                            for(let dz=-1; dz<=1; dz++) {
+                                let x = vxLoc+dx, y = vyLoc+dy, z = vzLoc+dz;
+                                if(x>=0 && x<nx && y>=0 && y<ny && z>=0 && z<nz) {
+                                    const idx = IX(x,y,z);
+                                    if(grid[idx] === 0) {
+                                        surfaceVoxels.add(idx);
+                                        found = true;
+                                    }
+                                }
                             }
                         }
                     }
+                    
+                    if (!found && vxLoc>=0 && vxLoc<nx && vyLoc>=0 && vyLoc<ny && vzLoc>=0 && vzLoc<nz) {
+                        const idx = IX(vxLoc, vyLoc, vzLoc);
+                        grid[idx] = 0;
+                        surfaceVoxels.add(idx);
+                    }
                 }
-            }
-            
-            if (!found && vxLoc>=0 && vxLoc<nx && vyLoc>=0 && vyLoc<ny && vzLoc>=0 && vzLoc<nz) {
-                const idx = IX(vxLoc, vyLoc, vzLoc);
-                grid[idx] = 0;
-                surfaceVoxels.add(idx);
             }
         });
 
@@ -977,9 +1007,6 @@ class CastFlowApp {
         const g = new THREE.BoxGeometry(vs, vs, vs);
         const m = new THREE.MeshBasicMaterial({ 
             vertexColors: false,
-            transparent: true,
-            opacity: 0.85,
-            depthWrite: true,
             clippingPlanes: [this.clipPlane]
         });
         
@@ -1115,11 +1142,11 @@ class CastFlowApp {
             // Air voxels: fillVal == -1 (sent by worker when showAir is on)
             const isAir = fillVal < 0;
             if (isAir) {
-                this.dummy.scale.set(0.8, 0.8, 0.8);
+                // Render as small opaque dots for air
+                this.dummy.scale.set(0.2, 0.2, 0.2);
                 this.dummy.updateMatrix();
                 this.fluidMesh.setMatrixAt(i, this.dummy.matrix);
-                // Transparent light blue for air cavity
-                this.colorBuffer.setRGB(0.3, 0.5, 0.8);
+                this.colorBuffer.setRGB(0.5, 0.6, 0.7); // Light gray-blue
                 this.fluidMesh.setColorAt(i, this.colorBuffer);
                 continue;
             }

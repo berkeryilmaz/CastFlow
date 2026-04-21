@@ -91,6 +91,7 @@ self.onmessage = function(e) {
         buildCavityIndex();
     } else if (msg.type === 'SHOW_AIR') {
         showAir = !!msg.value;
+        sendVisualData();
     }
 };
 
@@ -237,17 +238,24 @@ function applySources() {
     for (let k = 0; k < inletIndices.length; k++) {
         const i = inletIndices[k];
         fill[i] = 1.0;
-        T[i] = injectTemp;
-        sFraction[i] = 0;
         
         const n = inletNormals.get(i);
         if (n) {
             // Back-pressure ratio: local pressure vs injection pressure
             const backPressureRatio = Math.max(0, 1.0 - Math.abs(p[i]) / (injectPressure + 1e-6));
             const effectiveSpeed = inletSpeed * backPressureRatio;
-            vx[i] = n.nx * effectiveSpeed;
-            vy[i] = n.ny * effectiveSpeed;
-            vz[i] = n.nz * effectiveSpeed;
+            
+            if (effectiveSpeed > 0.01 * inletSpeed) {
+                T[i] = injectTemp;
+                sFraction[i] = 0;
+                vx[i] = n.nx * effectiveSpeed;
+                vy[i] = n.ny * effectiveSpeed;
+                vz[i] = n.nz * effectiveSpeed;
+            } else {
+                vx[i] = 0;
+                vy[i] = 0;
+                vz[i] = 0;
+            }
         }
     }
     // Outlet BCs
@@ -350,7 +358,8 @@ function advectFill() {
     for (let z = 0; z < nz; z++) {
         for (let y = 0; y < ny; y++) {
             for (let x = 0; x < nx; x++) {
-                if (moldGrid[idx] === 1 || isInlet[idx] === 1) {
+                if (moldGrid[idx] === 1 || isInlet[idx] === 1 || sFraction[idx] >= 0.99) {
+                    fillNew[idx] = fill[idx];
                     idx++;
                     continue;
                 }
