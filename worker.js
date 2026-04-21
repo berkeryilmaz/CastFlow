@@ -759,7 +759,16 @@ function computeHeatTransfer() {
                                           T[idx - nx] + T[idx + nx] +
                                           T[idx - nxny] + T[idx + nxny] -
                                           6.0 * T[idx];
-                        TNew[idx] = T[idx] + dFactorCast * laplacian;
+                                          
+                        let apparentC = 1.0;
+                        if (mat.liquidusTemp > mat.solidusTemp) {
+                            const range = mat.liquidusTemp - mat.solidusTemp;
+                            if (T[idx] >= mat.solidusTemp && T[idx] <= mat.liquidusTemp) {
+                                apparentC = 1.0 + (mat.latentHeat || 0) / ((mat.specificHeat || 1) * range);
+                            }
+                        }
+                                          
+                        TNew[idx] = T[idx] + (dFactorCast / apparentC) * laplacian;
                     }
                 }
                 idx++;
@@ -802,14 +811,6 @@ function computeSolidification() {
                 vz[i] *= d;
             } else {
                 sFraction[i] = 0.0;
-            }
-            
-            // Latent heat release
-            if (latentHeat > 0) {
-                const dSFrac = sFraction[i] - oldSFrac;
-                if (dSFrac > 0) {
-                    T[i] += (latentHeat * dSFrac) / specificHeat;
-                }
             }
         }
     }

@@ -295,7 +295,12 @@ fn heat_transfer(@builtin(global_invocation_id) gid: vec3<u32>) {
             let lap = scalars[IX(x-1,y,z)].y + scalars[IX(x+1,y,z)].y
                     + scalars[IX(x,y-1,z)].y + scalars[IX(x,y+1,z)].y
                     + scalars[IX(x,y,z-1)].y + scalars[IX(x,y,z+1)].y - 6.0*s.y;
-            sn.y = s.y + params.thermalDiffFactor * lap;
+            let range = params.liquidusTemp - params.solidusTemp;
+            var apparentC = 1.0;
+            if (range > 0.0 && s.y >= params.solidusTemp && s.y <= params.liquidusTemp) {
+                apparentC = 1.0 + params.latentHeat / (params.specificHeat * range + 0.0001);
+            }
+            sn.y = s.y + (params.thermalDiffFactor / apparentC) * lap;
             scalarsNew[idx] = sn; return;
         }
     }
@@ -325,10 +330,6 @@ fn solidification(@builtin(global_invocation_id) gid: vec3<u32>) {
         let damp = 1.0 - s.z;
         var v = velocity[idx]; v.x *= damp; v.y *= damp; v.z *= damp; velocity[idx] = v;
     } else { s.z = 0.0; }
-    if (params.latentHeat > 0.0) {
-        let dSF = s.z - oldSF;
-        if (dSF > 0.0) { s.y += (params.latentHeat * dSF) / params.specificHeat; }
-    }
     scalars[idx] = s;
 }
 `;
@@ -633,12 +634,13 @@ export class GPUSimEngine {
             this._dispatch(encoder, this.pp.swap_velocity_temp, gw, pg);
             // 7. Re-enforce sources
             if (this.inletCount > 0) this._dispatch(encoder, this.pp.apply_sources, inletWG, pg);
+            
+            // 8. Heat transfer
+            this._dispatch(encoder, this.pp.heat_transfer, gw, pg);
+            this._dispatch(encoder, this.pp.swap_temp, gw, pg);
+            // 9. Solidification
+            this._dispatch(encoder, this.pp.solidification, gw, pg);
         }
-        // 8. Heat transfer (once per batch)
-        this._dispatch(encoder, this.pp.heat_transfer, gw, pg);
-        this._dispatch(encoder, this.pp.swap_temp, gw, pg);
-        // 9. Solidification
-        this._dispatch(encoder, this.pp.solidification, gw, pg);
 
         // 10. Extract visual data
         const eg = this.extractGroups;
