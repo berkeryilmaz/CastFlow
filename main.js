@@ -422,6 +422,7 @@ class CastFlowApp {
                 '<i data-feather="wind" style="width: 14px; height: 14px; vertical-align: middle;"></i> Show Air';
             feather.replace();
             if (this.worker) this.worker.postMessage({ type: 'SHOW_AIR', value: this.showAir });
+            if (this.gpuEngine) this.gpuEngine.setShowAir(this.showAir);
         });
 
         // Grid Toggle
@@ -1041,7 +1042,8 @@ class CastFlowApp {
             injectTemp: parseFloat(document.getElementById('inject-temp').value),
             injectPressure: parseFloat(document.getElementById('inject-pressure').value),
             solverIters: parseInt(document.getElementById('solver-iters').value),
-            compressibility: parseFloat(document.getElementById('compressibility').value)
+            compressibility: parseFloat(document.getElementById('compressibility').value),
+            showAir: this.showAir
         };
 
         if (this.useGPU && this.gpuEngine) {

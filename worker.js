@@ -242,7 +242,8 @@ function applySources() {
         const n = inletNormals.get(i);
         if (n) {
             // Back-pressure ratio: local pressure vs injection pressure
-            const backPressureRatio = Math.max(0, 1.0 - Math.abs(p[i]) / (injectPressure + 1e-6));
+            const physicalPressure = Math.abs(p[i]) * mat.density / dt;
+            const backPressureRatio = Math.max(0, 1.0 - physicalPressure / (injectPressure + 1e-6));
             const effectiveSpeed = inletSpeed * backPressureRatio;
             
             if (effectiveSpeed > 0.01 * inletSpeed) {
@@ -839,7 +840,7 @@ function sendVisualData() {
             buf[ptr++] = vx[i];
             buf[ptr++] = vy[i];
             buf[ptr++] = vz[i];
-            buf[ptr++] = p[i];
+            buf[ptr++] = Math.abs(p[i]) * mat.density / dt;
             buf[ptr++] = sFraction[i];
         }
     }

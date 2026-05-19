@@ -17,6 +17,7 @@ struct SimParams {
     inletSpeed: f32, inletCount: u32, gravity: f32, thermalDiffFactor: f32,
     latentHeat: f32, specificHeat: f32, solidusTemp: f32, liquidusTemp: f32,
     thermalDiffFactorMold: f32, injectPressure: f32, _pad1: u32, _pad2: u32,
+    compressibility: f32, density: f32, showAir: f32, _pad4: u32,
 };
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(1) @binding(0) var<storage, read_write> gridFlags: array<u32>;
@@ -67,7 +68,8 @@ fn apply_sources(@builtin(global_invocation_id) gid: vec3<u32>) {
     let i = gid.x + gid.y * params._pad2;
     if (i >= params.inletCount) { return; }
     let d = inletData[i]; let ci = u32(d.x);
-    let backPressureRatio = max(0.0, 1.0 - abs(velocity[ci].w) / (params.injectPressure + 0.000001));
+    let physicalPressure = abs(velocity[ci].w) * params.density / params.dt;
+    let backPressureRatio = max(0.0, 1.0 - physicalPressure / (params.injectPressure + 0.000001));
     let effectiveSpeed = params.inletSpeed * backPressureRatio;
     
     if (effectiveSpeed > 0.01 * params.inletSpeed) {
@@ -84,7 +86,10 @@ fn add_gravity(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (idx >= params.totalCells || isMold(idx)) { return; }
     let s = scalars[idx];
     if (s.x > 0.01 && s.z < 0.99) {
-        var v = velocity[idx]; v.y += params.gravity * params.dt; velocity[idx] = v;
+        var v = velocity[idx];
+        let liquidFrac = 1.0 - s.z;
+        v.y += params.gravity * params.dt * (liquidFrac * liquidFrac * liquidFrac);
+        velocity[idx] = v;
     }
 }
 
@@ -107,7 +112,21 @@ fn compute_divergence(@builtin(global_invocation_id) gid: vec3<u32>) {
     let vyD = select(0.0, velocity[IX(x,y-1,z)].y, y>0 && !isMold(IX(x,y-1,z)));
     let vzF = select(0.0, velocity[IX(x,y,z+1)].z, z<nz-1 && !isMold(IX(x,y,z+1)));
     let vzB = select(0.0, velocity[IX(x,y,z-1)].z, z>0 && !isMold(IX(x,y,z-1)));
-    vn.w = -halfDx * ((vxR-vxL) + (vyU-vyD) + (vzF-vzB));
+    
+    var divVal = -halfDx * ((vxR-vxL) + (vyU-vyD) + (vzF-vzB));
+    
+    // Add air compression source term for empty/partially-filled cells
+    let fillFraction = scalars[idx].x;
+    if (fillFraction < 0.99 && !isOutletF(idx)) {
+        let airFraction = max(0.005, 1.0 - fillFraction);
+        let airP = 101325.0 / airFraction;
+        if (airP > 101325.0) {
+            let pExcess = (airP - 101325.0) / 101325.0;
+            divVal += pExcess * params.compressibility * params.voxelSize;
+        }
+    }
+    
+    vn.w = divVal;
     velocityNew[idx] = vn;
 }
 
@@ -172,6 +191,15 @@ fn pressure_correct(@builtin(global_invocation_id) gid: vec3<u32>) {
     let pF=select(p0, velocity[IX(x,y,z+1)].w, z<nz-1 && !isMold(IX(x,y,z+1)));
     let pB=select(p0, velocity[IX(x,y,z-1)].w, z>0 && !isMold(IX(x,y,z-1)));
     v.x -= (pR-pL)*gradScale; v.y -= (pU-pD)*gradScale; v.z -= (pF-pB)*gradScale;
+    
+    // Darcy damping after correction
+    let fs = scalars[idx].z;
+    if (fs > 0.01) {
+        let lf = 1.0 - fs;
+        let d = lf * lf * lf;
+        v.x *= d; v.y *= d; v.z *= d;
+    }
+    
     velocity[idx] = v;
 }
 
@@ -224,7 +252,11 @@ fn advect_fill(@builtin(global_invocation_id) gid: vec3<u32>) {
     // Z+
     if (z<nz-1) { let ni=IX(x,y,z+1); if (!isMold(ni)) { let vf=0.5*(velocity[idx].z+velocity[ni].z);
         nf -= select(scalars[ni].x*vf*dtDx, myF*vf*dtDx, vf>0.0); } }
-    sn.x = clamp(myF + nf, 0.0, 1.0);
+    var fillVal = clamp(myF + nf, 0.0, 1.0);
+    if (isOutletF(idx)) {
+        fillVal = min(fillVal, 0.95);
+    }
+    sn.x = fillVal;
     scalarsNew[idx] = sn;
 }
 
@@ -246,7 +278,13 @@ fn advect_velocity_temp(@builtin(global_invocation_id) gid: vec3<u32>) {
         let px = f32(pos.x) - dtInvDx * velocity[idx].x;
         let py = f32(pos.y) - dtInvDx * velocity[idx].y;
         let pz = f32(pos.z) - dtInvDx * velocity[idx].z;
-        velocityNew[idx] = vec4<f32>(interpVel(px,py,pz) * 0.998, velocity[idx].w);
+        
+        let fs = scalars[idx].z;
+        let lf = 1.0 - fs;
+        let darcyDamp = lf * lf * lf;
+        let visDamp = 0.998 * darcyDamp;
+        
+        velocityNew[idx] = vec4<f32>(interpVel(px,py,pz) * visDamp, velocity[idx].w);
         var sn=scalarsNew[idx]; sn.y=interpTemp(px,py,pz); scalarsNew[idx]=sn;
     } else {
         velocityNew[idx] = vec4<f32>(0.0, 0.0, 0.0, velocity[idx].w);
@@ -345,6 +383,7 @@ struct SimParams {
     inletSpeed: f32, inletCount: u32, gravity: f32, thermalDiffFactor: f32,
     latentHeat: f32, specificHeat: f32, solidusTemp: f32, liquidusTemp: f32,
     thermalDiffFactorMold: f32, injectPressure: f32, _pad1: u32, _pad2: u32,
+    compressibility: f32, density: f32, showAir: f32, _pad4: u32,
 };
 @group(0) @binding(0) var<uniform> params: SimParams;
 @group(1) @binding(0) var<storage, read> gridFlags: array<u32>;
@@ -361,13 +400,25 @@ fn extract_visual(@builtin(global_invocation_id) gid: vec3<u32>) {
     let idx = gid.x + gid.y * params._pad1;
     if (idx >= params.totalCells) { return; }
     if ((gridFlags[idx] & 1u) != 0u) { return; }
+    
     let s = scalars[idx]; let v = velocity[idx];
-    if (s.x > 0.02 || s.z > 0.0) {
+    let hasFluid = s.x > 0.02 || s.z > 0.0;
+    
+    if (hasFluid || params.showAir > 0.5) {
         let pos = atomicAdd(&counter[0], 1u);
         let b = pos * 8u;
-        output[b]=f32(idx); output[b+1u]=s.x; output[b+2u]=s.y;
-        output[b+3u]=v.x; output[b+4u]=v.y; output[b+5u]=v.z;
-        output[b+6u]=v.w; output[b+7u]=s.z;
+        output[b] = f32(idx);
+        output[b+1u] = select(-1.0, s.x, hasFluid);
+        output[b+2u] = s.y;
+        output[b+3u] = v.x;
+        output[b+4u] = v.y;
+        output[b+5u] = v.z;
+        
+        // Convert solver pressure to physical pressure in Pascals for visual rendering
+        let physicalPressure = abs(v.w) * params.density / params.dt;
+        output[b+6u] = physicalPressure;
+        
+        output[b+7u] = s.z;
     }
 }
 `;
@@ -417,6 +468,11 @@ export class GPUSimEngine {
         this.injectPressure = config.injectPressure || 100000;
         this.inletSpeed = Math.min(10.0, Math.sqrt(2.0 * this.injectPressure / this.mat.density));
 
+        // Physics and air parameters
+        this.compressibility = config.compressibility || 0.0001;
+        this.density = this.mat.density;
+        this.showAir = config.showAir ? 1.0 : 0.0;
+
         // Thermal diffusion factors
         const alpha = this.mat.thermalConductivity / (this.mat.density * this.mat.specificHeat);
         this.thermalDiffFactor = Math.min(alpha * this.dt / (this.voxelSize * this.voxelSize), 0.15);
@@ -433,17 +489,23 @@ export class GPUSimEngine {
         const tc = this.totalCells;
 
         // ── Create Buffers ──
-        this.uniformsBuffer = d.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.uniformsBuffer = d.createBuffer({ size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         this.gridFlagsBuffer = d.createBuffer({ size: tc * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-        this.velocityBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE });
-        this.velocityNewBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE });
+        this.velocityBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+        this.velocityNewBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         this.scalarsBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-        this.scalarsNewBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE });
+        this.scalarsNewBuffer = d.createBuffer({ size: tc * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         this.inletDataBuffer = d.createBuffer({ size: Math.max(16, 131072 * 16), usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
         this.outputBuffer = d.createBuffer({ size: this.maxOutput * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
         this.counterBuffer = d.createBuffer({ size: 256, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
         this.outputStaging = d.createBuffer({ size: this.maxOutput * 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
         this.counterStaging = d.createBuffer({ size: 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+
+        // ── Clean zero-initialization of buffers to prevent GPU garbage values ──
+        const zeroInit = new Float32Array(tc * 4);
+        d.queue.writeBuffer(this.velocityBuffer, 0, zeroInit);
+        d.queue.writeBuffer(this.velocityNewBuffer, 0, zeroInit);
+        d.queue.writeBuffer(this.scalarsNewBuffer, 0, zeroInit);
 
         // ── Init grid flags ──
         const gridFlagsData = new Uint32Array(tc);
@@ -456,17 +518,17 @@ export class GPUSimEngine {
         for (let i = 0; i < tc; i++) scalarsInit[i * 4 + 1] = this.moldTemp;
         d.queue.writeBuffer(this.scalarsBuffer, 0, scalarsInit);
 
+        this.gridWorkgroups = Math.ceil(tc / WG_SIZE);
+
         // ── Write uniforms ──
         this._writeUniforms();
 
         // ── Create Pipelines ──
         this._createPipelines();
-
-        this.gridWorkgroups = Math.ceil(tc / WG_SIZE);
     }
 
     _writeUniforms() {
-        const buf = new ArrayBuffer(80);
+        const buf = new ArrayBuffer(96);
         const v = new DataView(buf);
         v.setUint32(0, this.nx, true);
         v.setUint32(4, this.ny, true);
@@ -491,7 +553,20 @@ export class GPUSimEngine {
         const pad2 = Math.min(Math.max(1, Math.ceil(this.inletCount / WG_SIZE)), 65535) * WG_SIZE;
         v.setUint32(72, pad1, true);
         v.setUint32(76, pad2, true);
+        
+        v.setFloat32(80, this.compressibility, true);
+        v.setFloat32(84, this.density, true);
+        v.setFloat32(88, this.showAir, true);
+        v.setUint32(92, 0, true); // _pad4
+        
         this.device.queue.writeBuffer(this.uniformsBuffer, 0, buf);
+    }
+
+    setShowAir(value) {
+        this.showAir = value ? 1.0 : 0.0;
+        if (this.device && this.uniformsBuffer) {
+            this._writeUniforms();
+        }
     }
 
     _createPipelines() {
